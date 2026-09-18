@@ -5,7 +5,7 @@ const ANTHROPIC_API_BASE = "https://api.anthropic.com";
 const ANTHROPIC_VERSION = "2023-06-01";
 
 export interface AnthropicModelOptions {
-  apiKey: string;
+  apiKey?: string;
   baseUrl?: string;
   logicalId?: string;
   retry?: RetryOptions;
@@ -25,16 +25,14 @@ export function createAnthropicModel(
 
     async *stream(request: ChatRequest): AsyncIterable<ChatChunk> {
       const { system, messages } = splitSystem(request.messages);
+      const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": ANTHROPIC_VERSION };
+      if (apiKey) headers["x-api-key"] = apiKey;
       const response = await fetchOk(
         () =>
           fetch(`${baseUrl}/v1/messages`, {
             method: "POST",
             signal: request.signal,
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": apiKey,
-              "anthropic-version": ANTHROPIC_VERSION,
-            },
+            headers,
             body: JSON.stringify({
               model: request.model,
               messages,
@@ -91,18 +89,16 @@ export function createAnthropicModel(
       yield { contentDelta: "", finishReason: finishReason ?? "stop" };
     },
 
-    async complete(request: ChatRequest): Promise<ChatResponse> {
+async complete(request: ChatRequest): Promise<ChatResponse> {
       const { system, messages } = splitSystem(request.messages);
+      const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": ANTHROPIC_VERSION };
+      if (apiKey) headers["x-api-key"] = apiKey;
       const response = await fetchOk(
         () =>
           fetch(`${baseUrl}/v1/messages`, {
             method: "POST",
             signal: request.signal,
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": apiKey,
-              "anthropic-version": ANTHROPIC_VERSION,
-            },
+            headers,
             body: JSON.stringify({
               model: request.model,
               messages,
@@ -121,16 +117,14 @@ export function createAnthropicModel(
 
     async completeV1(request: V1CompletionRequest): Promise<ProviderCompletion> {
       const { system, messages } = splitSystem(request.messages);
+      const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": ANTHROPIC_VERSION };
+      if (apiKey) headers["x-api-key"] = apiKey;
       const response = await fetchOk(
         () =>
           fetch(`${baseUrl}/v1/messages`, {
             method: "POST",
             signal: request.signal,
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": apiKey,
-              "anthropic-version": ANTHROPIC_VERSION,
-            },
+            headers,
             body: JSON.stringify({
               model: request.model,
               messages,

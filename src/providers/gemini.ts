@@ -4,7 +4,7 @@ import { fetchOk, type RetryOptions } from "./errors.js";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export interface GeminiModelOptions {
-  apiKey: string;
+  apiKey?: string;
   baseUrl?: string;
   logicalId?: string;
   retry?: RetryOptions;
@@ -17,6 +17,8 @@ export function createGeminiModel(
 ): JevModel {
   const { apiKey, baseUrl = GEMINI_API_BASE, logicalId, retry, fetch = globalThis.fetch } = options;
 
+  const keyParam = apiKey ? `&key=${encodeURIComponent(apiKey)}` : "";
+
   return {
     provider: "gemini",
     id: modelId,
@@ -26,7 +28,7 @@ export function createGeminiModel(
       const body = toGeminiRequest(request);
       const response = await fetchOk(
         () =>
-          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:streamGenerateContent?alt=sse`, {
+          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:streamGenerateContent?alt=sse${keyParam}`, {
             method: "POST",
             signal: request.signal,
             headers: { "Content-Type": "application/json" },
@@ -84,7 +86,7 @@ export function createGeminiModel(
       const body = toGeminiRequest(request);
       const response = await fetchOk(
         () =>
-          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:generateContent`, {
+          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:generateContent${keyParam}`, {
             method: "POST",
             signal: request.signal,
             headers: { "Content-Type": "application/json" },
@@ -102,7 +104,7 @@ export function createGeminiModel(
       const body = toGeminiRequest(request);
       const response = await fetchOk(
         () =>
-          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:generateContent`, {
+          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:generateContent${keyParam}`, {
             method: "POST",
             signal: request.signal,
             headers: { "Content-Type": "application/json" },

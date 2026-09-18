@@ -4,7 +4,7 @@ import { fetchOk, type RetryOptions, toProviderCompletionError } from "./errors.
 const OPENAI_API_BASE = "https://api.openai.com/v1";
 
 export interface OpenAIModelOptions {
-  apiKey: string;
+  apiKey?: string;
   baseUrl?: string;
   logicalId?: string;
   retry?: RetryOptions;
@@ -23,15 +23,14 @@ export function createOpenAIModel(
     logicalId,
 
     async *stream(request: ChatRequest): AsyncIterable<ChatChunk> {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       const response = await fetchOk(
         () =>
           fetch(`${baseUrl}/chat/completions`, {
             method: "POST",
             signal: request.signal,
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers,
             body: JSON.stringify({
               model: request.model,
               messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -89,15 +88,14 @@ export function createOpenAIModel(
     },
 
     async complete(request: ChatRequest): Promise<ChatResponse> {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       const response = await fetchOk(
         () =>
           fetch(`${baseUrl}/chat/completions`, {
             method: "POST",
             signal: request.signal,
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers,
             body: JSON.stringify({
               model: request.model,
               messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -119,15 +117,14 @@ export function createOpenAIModel(
         return completeResponsesV1(request, apiKey, baseUrl, retry, fetch, modelId);
       }
 
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       const response = await fetchOk(
         () =>
           fetch(`${baseUrl}/chat/completions`, {
             method: "POST",
             signal: request.signal,
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
+            headers,
             body: JSON.stringify({
               model: request.model,
               messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -172,21 +169,20 @@ export function parseOpenAIChatCompletion(
 
 export async function completeResponsesV1(
   request: V1CompletionRequest,
-  apiKey: string,
+  apiKey: string | undefined,
   baseUrl: string,
   retry: RetryOptions | undefined,
   fetchImpl: typeof fetch,
   modelId: string,
 ): Promise<ProviderCompletion> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetchOk(
     () =>
       fetchImpl(`${baseUrl}/v1/responses`, {
         method: "POST",
         signal: request.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers,
         body: JSON.stringify(toResponsesRequestBody(request)),
       }),
     retry,

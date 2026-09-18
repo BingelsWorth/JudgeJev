@@ -72,9 +72,6 @@ function buildV1Graph(env: V1ApiBindings) {
   return buildJevGraph({
     modelFactory: async (route: ModelRoute) => {
       const { apiKey, baseUrl } = getProviderConfig(env, route.provider);
-      if (!apiKey) {
-        throw new Error(`No API key configured for provider: ${route.provider}`);
-      }
 
       const { buildModel, configFromRoute } = await import("../providers/factory.js");
       return buildModel({ ...configFromRoute(route, apiKey), baseUrl }, {
