@@ -1,5 +1,5 @@
-import type { ChatChunk, ChatRequest, ChatResponse, JevModel, TokenUsage } from "./types.js";
-import { fetchOk, type RetryOptions } from "./errors.js";
+import type { ChatChunk, ChatRequest, ChatResponse, JevModel, TokenUsage, V1CompletionRequest, ProviderCompletion } from "./types.js";
+import { fetchOk, type RetryOptions, toProviderCompletionError } from "./errors.js";
 
 const OPENAI_API_BASE = "https://api.openai.com/v1";
 
@@ -110,15 +110,139 @@ export function createOpenAIModel(
       );
 
       const json: unknown = await response.json();
-      if (!isRecord(json)) throw new Error("OpenAI returned an invalid response");
-      const choices = Array.isArray(json.choices) ? json.choices : [];
-      const firstChoice = isRecord(choices[0]) ? choices[0] : undefined;
-      const message = isRecord(firstChoice?.message) ? firstChoice.message : undefined;
-      const content = typeof message?.content === "string" ? message.content : "";
-      const usage = parseTokenUsage(json.usage);
-
-      return { content, usage };
+      const parsed = parseOpenAIChatCompletion(json, request, modelId);
+      return { content: parsed.content, usage: parsed.usage };
     },
+
+    async completeV1(request: V1CompletionRequest): Promise<ProviderCompletion> {
+      if (request.protocol === "openai_responses") {
+        return completeResponsesV1(request, apiKey, baseUrl, retry, fetch, modelId);
+      }
+
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model: request.model,
+              messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
+              temperature: request.temperature,
+              max_tokens: request.maxTokens,
+              stream: false,
+            }),
+          }),
+        retry,
+      );
+
+      const json: unknown = await response.json();
+      return parseOpenAIChatCompletion(json, request, modelId);
+    },
+  };
+}
+
+export function parseOpenAIChatCompletion(
+  json: unknown,
+  request: V1CompletionRequest,
+  modelId: string,
+): ProviderCompletion {
+  if (!isRecord(json)) throw new Error("OpenAI returned an invalid response");
+  const choices = Array.isArray(json.choices) ? json.choices : [];
+  const firstChoice = isRecord(choices[0]) ? choices[0] : undefined;
+  const message = isRecord(firstChoice?.message) ? firstChoice.message : undefined;
+  const content = typeof message?.content === "string" ? message.content : "";
+  const finishReason = typeof firstChoice?.finish_reason === "string" ? firstChoice.finish_reason : undefined;
+  const usage = parseTokenUsage(json.usage);
+
+  return {
+    id: typeof json.id === "string" ? json.id : undefined,
+    content,
+    usage,
+    finishReason,
+    provider: "openai",
+    upstreamModel: modelId,
+    logicalModel: request.logicalModel,
+    raw: json,
+  };
+}
+
+export async function completeResponsesV1(
+  request: V1CompletionRequest,
+  apiKey: string,
+  baseUrl: string,
+  retry: RetryOptions | undefined,
+  fetchImpl: typeof fetch,
+  modelId: string,
+): Promise<ProviderCompletion> {
+  const response = await fetchOk(
+    () =>
+      fetchImpl(`${baseUrl}/v1/responses`, {
+        method: "POST",
+        signal: request.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(toResponsesRequestBody(request)),
+      }),
+    retry,
+  );
+
+  const json: unknown = await response.json();
+  return parseOpenAIResponsesCompletion(json, request, modelId);
+}
+
+export function parseOpenAIResponsesCompletion(
+  json: unknown,
+  request: V1CompletionRequest,
+  modelId: string,
+): ProviderCompletion {
+  if (!isRecord(json)) throw new Error("OpenAI returned an invalid response");
+  const output = Array.isArray(json.output) ? json.output : [];
+  let content = "";
+  for (const item of output) {
+    if (isRecord(item) && item.type === "message" && Array.isArray(item.content)) {
+      for (const block of item.content) {
+        if (isRecord(block) && typeof block.text === "string") {
+          content += block.text;
+        }
+      }
+    }
+  }
+  let finishReason: string | undefined;
+  const status = typeof json.status === "string" ? json.status : undefined;
+  if (status === "incomplete") finishReason = "length";
+  const usage = parseTokenUsage(json.usage);
+
+  return {
+    id: typeof json.id === "string" ? json.id : undefined,
+    content,
+    usage,
+    finishReason,
+    provider: "openai",
+    upstreamModel: modelId,
+    logicalModel: request.logicalModel,
+    raw: json,
+  };
+}
+
+export function toResponsesRequestBody(request: V1CompletionRequest): Record<string, unknown> {
+  const input = request.messages.map((m) => ({
+    type: "message" as const,
+    role: m.role === "system" ? ("developer" as const) : m.role,
+    content: m.content,
+  }));
+  const systemMessage = request.messages.find((m) => m.role === "system");
+  return {
+    model: request.model,
+    input,
+    instructions: systemMessage?.content,
+    temperature: request.temperature,
+    max_output_tokens: request.maxTokens,
   };
 }
 
@@ -144,8 +268,8 @@ function mapFinishReason(reason: string): ChatChunk["finishReason"] {
 
 function parseTokenUsage(value: unknown): TokenUsage | undefined {
   if (!isRecord(value)) return undefined;
-  const inputTokens = Number(value.prompt_tokens);
-  const outputTokens = Number(value.completion_tokens);
+  const inputTokens = Number(value.input_tokens ?? value.prompt_tokens);
+  const outputTokens = Number(value.output_tokens ?? value.completion_tokens);
   if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return undefined;
   return { inputTokens, outputTokens };
 }

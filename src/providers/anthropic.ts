@@ -1,4 +1,4 @@
-import type { ChatChunk, ChatMessage, ChatRequest, ChatResponse, JevModel, TokenUsage } from "./types.js";
+import type { ChatChunk, ChatMessage, ChatRequest, ChatResponse, JevModel, TokenUsage, V1CompletionRequest, ProviderCompletion } from "./types.js";
 import { fetchOk, type RetryOptions } from "./errors.js";
 
 const ANTHROPIC_API_BASE = "https://api.anthropic.com";
@@ -115,15 +115,65 @@ export function createAnthropicModel(
       );
 
       const json: unknown = await response.json();
-      if (!isRecord(json)) throw new Error("Anthropic returned an invalid response");
-      const contentBlocks = Array.isArray(json.content) ? json.content : [];
-      const content = contentBlocks
-        .map((block) => (isRecord(block) && typeof block.text === "string" ? block.text : ""))
-        .join("");
-      const usage = parseTokenUsage(json.usage);
-
-      return { content, usage };
+      const parsed = parseAnthropicMessagesCompletion(json, request, modelId);
+      return { content: parsed.content, usage: parsed.usage };
     },
+
+    async completeV1(request: V1CompletionRequest): Promise<ProviderCompletion> {
+      const { system, messages } = splitSystem(request.messages);
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/v1/messages`, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": ANTHROPIC_VERSION,
+            },
+            body: JSON.stringify({
+              model: request.model,
+              messages,
+              system,
+              max_tokens: request.maxTokens ?? 1024,
+              stream: false,
+            }),
+          }),
+        retry,
+      );
+
+      const json: unknown = await response.json();
+      return parseAnthropicMessagesCompletion(json, request, modelId);
+    },
+  };
+}
+
+export function parseAnthropicMessagesCompletion(
+  json: unknown,
+  request: V1CompletionRequest,
+  modelId: string,
+): ProviderCompletion {
+  if (!isRecord(json)) throw new Error("Anthropic returned an invalid response");
+  const contentBlocks = Array.isArray(json.content) ? json.content : [];
+  const textBlocks: string[] = [];
+  for (const block of contentBlocks) {
+    if (isRecord(block) && typeof block.text === "string") {
+      textBlocks.push(block.text);
+    }
+  }
+  const content = textBlocks.join("");
+  const stopReason = typeof json.stop_reason === "string" ? json.stop_reason : undefined;
+  const usage = parseTokenUsage(json.usage);
+
+  return {
+    id: typeof json.id === "string" ? json.id : undefined,
+    content,
+    usage,
+    finishReason: stopReason,
+    provider: "anthropic",
+    upstreamModel: modelId,
+    logicalModel: request.logicalModel,
+    raw: json,
   };
 }
 

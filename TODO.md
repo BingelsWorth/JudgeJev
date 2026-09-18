@@ -90,14 +90,16 @@ The current implementation already has concurrent non-streaming fan-out, basic d
 
 #### Chunk B — Provider completion and candidate normalization
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** Chunk 0
-- [ ] **Files:** `src/providers/types.ts`, `src/providers/openai.ts`, `src/providers/anthropic.ts`, `src/providers/gemini.ts`, `test/providers.test.ts` (new)
-- [ ] Keep the v1 path non-streaming and normalize each provider's complete response into the shared candidate type.
-- [ ] Preserve text, usage, finish metadata, provider metadata, and structured fields required by the judging contract.
-- [ ] Convert provider failures into the shared error classification without exposing credentials or provider internals.
-- [ ] Do not change routing policy or implement streaming behavior in this chunk.
-- [ ] **Exit criteria:** provider tests cover OpenAI, Anthropic, Gemini, malformed responses, usage, and failure classification.
+- [x] **Owner:** Kilo
+- [x] **Dependencies:** Chunk 0
+- [x] **Files:** `src/providers/types.ts`, `src/providers/openai.ts`, `src/providers/anthropic.ts`, `src/providers/gemini.ts`, `src/providers/normalize.ts` (new), `test/providers.test.ts` (new)
+- [x] Keep the v1 path non-streaming and normalize each provider's complete response into the shared candidate type.
+- [x] Preserve text, usage, finish metadata, provider metadata, and structured fields required by the judging contract.
+- [x] Convert provider failures into the shared error classification without exposing credentials or provider internals.
+- [x] Do not change routing policy or implement streaming behavior in this chunk.
+- [x] **Exit criteria:** provider tests cover OpenAI, Anthropic, Gemini, malformed responses, usage, and failure classification.
+
+**Chunk B results:** Added `ProviderCompletion`, `ProviderCompletionError`, and `V1CompletionRequest` types to `types.ts`; added `completeV1` methods and exported parse functions (`parseOpenAIChatCompletion`, `parseOpenAIResponsesCompletion`, `parseAnthropicMessagesCompletion`, `parseGeminiGenerateContent`) to each provider; added `toResponsesRequestBody` and `completeResponsesV1` for the OpenAI Responses API protocol; added `convertGeminiToDownstream` for protocol conversion (OpenAI chat completions, Anthropic messages, OpenAI responses); added `toProviderCompletionError`/`classifyToAttemptErrorCode` to `errors.ts`; added `normalize.ts` with `normalizeProviderCompletion`, `normalizeProviderError`, `normalizeUsage`, and `normalizeFinishReason`. `npm test` = 84/84, `npm run typecheck`, `npm run build`, and `git diff --check` pass. No commit has been made.
 
 #### Chunk C — Routing, retry, and fail-forward behavior
 
@@ -193,7 +195,7 @@ Use these upstream areas as the reference for v1's non-streaming pieces. Streami
 
 ## Current validation
 
-- `npm test`: 13/13 passing on the last run, including 8 focused v1 contract tests.
+- `npm test`: 84/84 passing (71 provider tests, 8 v1 contract tests, 5 judge tests).
 - `npm run typecheck`: passing on the last run.
 - `npm run build`: passing on the last run.
 - `git diff --check`: passing on the last run.

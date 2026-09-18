@@ -1,3 +1,5 @@
+import type { ProviderCompletionError, ProviderId } from "./types.js";
+
 export type RetryableFailureClass = "rate_limited" | "transient" | "persistent";
 
 export interface UpstreamErrorOptions {
@@ -175,6 +177,81 @@ function scalarString(value: unknown): string | undefined {
   if (typeof value === "string" && value.trim()) return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return undefined;
+}
+
+export function toProviderCompletionError(
+  error: unknown,
+  provider: ProviderId,
+  upstreamModel: string,
+  details?: Record<string, unknown>,
+): ProviderCompletionError {
+  if (error instanceof UpstreamError) {
+    return {
+      code: classifyToAttemptErrorCode(error.status, error.code, error.errorType),
+      message: error.message,
+      retryable: error.retryable,
+      status: error.status,
+      retryAfterMs: error.retryAfterMs,
+      provider,
+      upstreamModel,
+      details: { ...details, code: error.code, errorType: error.errorType, param: error.param },
+    };
+  }
+
+  if (error instanceof Error) {
+    const isAbort = isAbortError(error);
+    return {
+      code: isAbort ? "timeout" : "network_error",
+      message: error.message,
+      retryable: !isAbort,
+      provider,
+      upstreamModel,
+      details,
+    };
+  }
+
+  return {
+    code: "network_error",
+    message: typeof error === "string" ? error : "unknown provider error",
+    retryable: true,
+    provider,
+    upstreamModel,
+    details,
+  };
+}
+
+function classifyToAttemptErrorCode(
+  status?: number,
+  code?: string,
+  errorType?: string,
+): ProviderCompletionError["code"] {
+  const signal = `${code ?? ""} ${errorType ?? ""}`.trim().toLowerCase();
+
+  if (status === 401 || status === 403 || signal.includes("authentication") || signal.includes("invalid_api_key")) {
+    return "authentication_error";
+  }
+  if (
+    status === 404 ||
+    status === 410 ||
+    signal.includes("model_not_found") ||
+    signal.includes("model_not_supported") ||
+    signal.includes("unsupported_model")
+  ) {
+    return "unsupported_model";
+  }
+  if (status === 429 || signal.includes("rate_limit") || signal.includes("too_many_requests")) {
+    return "rate_limited";
+  }
+  if (status === 408 || (status !== undefined && status >= 500 && status < 600)) {
+    return "upstream_error";
+  }
+  if (status === 400 || status === 402 || status === 415 || status === 422 || status === 426 || status === 451) {
+    return "upstream_error";
+  }
+  if (signal.includes("invalid") || signal.includes("malformed") || signal.includes("parse")) {
+    return "invalid_response";
+  }
+  return "upstream_error";
 }
 
 function parseRetryAfterMs(value: string | null): number | undefined {
