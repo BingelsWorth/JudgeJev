@@ -1,0 +1,25 @@
+{
+  "name": "judge-jev",
+  "compatibility_date": "2024-09-01",
+  "main": "src/index.ts",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "JUDGE_JEV_RUNS",
+      "database_name": "judge-jev",
+      "database_id": "REPLACE_ME"
+    }
+  ],
+  "env": {
+    "production": {
+      "name": "judge-jev-production",
+      "d1_databases": [
+        {
+          "binding": "JUDGE_JEV_RUNS",
+          "database_name": "judge-jev-production",
+          "database_id": "REPLACE_ME"
+        }
+      ]
+    }
+  }
+}
