@@ -3,61 +3,123 @@
  *
  * The graph models one user request flowing through:
  *   fanOut -> inspect -> intervene -> judge -> winner
- *
- * This is the initial scaffolding. The full intervention/restart/branch/prune
- * logic will be filled in as the Jev system matures.
  */
 
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { JevStateAnnotation, type JevState, type WorkerAttempt } from "./state.js";
-import { judgeCandidates } from "../judge/judge.js";
+import { buildJudgeDecision, judgeCandidates } from "../judge/judge.js";
+import { defaultModelRoutes, resolveModelRoutes, type ModelRoute } from "../providers/router.js";
+import type { JevModel } from "../providers/types.js";
 
-/**
- * Spawn one worker per configured model. Each worker is a placeholder that
- * will eventually call the provider layer, stream, and emit checkpoints.
- */
-async function fanOut(state: JevState): Promise<Partial<JevState>> {
-  const workers: WorkerAttempt[] = (state.models ?? []).map((model, index) => ({
-    id: `worker-${index}`,
-    model,
-    provider: "openai",
-    status: "pending",
-    content: "",
-  }));
-
-  return { workers };
+export interface JevGraphOptions {
+  modelFactory: (route: ModelRoute) => Promise<JevModel>;
 }
 
-/**
- * Inspect worker checkpoints and record observations in `judgeNotes`.
- */
-async function inspect(state: JevState): Promise<Partial<JevState>> {
-  const notes: string[] = [];
-  for (const w of state.workers) {
-    notes.push(`inspected ${w.id} (${w.model}): status=${w.status}`);
+async function fanOut(state: JevState, options: JevGraphOptions): Promise<Partial<JevState>> {
+  const routes = routesForState(state);
+  const workers = await Promise.all(
+    routes.map((route, index) => runWorker(state, route, index, options)),
+  );
+
+  return { workers, candidates: [], winner: null, judgeNotes: [] };
+}
+
+async function runWorker(
+  state: JevState,
+  route: ModelRoute,
+  index: number,
+  options: JevGraphOptions,
+): Promise<WorkerAttempt> {
+  const worker: WorkerAttempt = {
+    id: `worker-${index}`,
+    model: route.logicalModel,
+    upstreamModel: route.upstreamModel,
+    provider: route.provider,
+    status: "running",
+    content: "",
+  };
+
+  try {
+    const model = await options.modelFactory(route);
+    const response = await model.complete({
+      model: route.upstreamModel,
+      logicalModel: route.logicalModel,
+      messages: [{ role: "user", content: state.request }],
+    });
+
+    return {
+      ...worker,
+      status: "succeeded",
+      content: response.content,
+      usage: response.usage,
+    };
+  } catch (error) {
+    return {
+      ...worker,
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
+}
+
+async function inspect(state: JevState): Promise<Partial<JevState>> {
+  const notes = state.workers.map((worker) => {
+    const detail = worker.error ? ` error=${worker.error}` : "";
+    return `inspected ${worker.id} (${worker.model}/${worker.upstreamModel ?? worker.model}): status=${worker.status}${detail}`;
+  });
   return { judgeNotes: notes };
 }
 
-/**
- * Jev intervention: kill bad workers, restart misunderstood tasks, branch
- * promising approaches, prune duplicates. Currently a passthrough.
- */
 async function intervene(state: JevState): Promise<Partial<JevState>> {
-  return { interventionCycles: (state.interventionCycles ?? 0) + 1 };
+  const viable = state.workers.filter(
+    (worker) => worker.status === "succeeded" && worker.content.trim().length > 0,
+  );
+  const seen = new Set<string>();
+  const candidates: WorkerAttempt[] = [];
+  const duplicateIds = new Set<string>();
+
+  for (const worker of viable) {
+    const fingerprint = worker.content.trim().toLowerCase();
+    if (seen.has(fingerprint)) {
+      duplicateIds.add(worker.id);
+      continue;
+    }
+    seen.add(fingerprint);
+    candidates.push(worker);
+  }
+
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  const workers = state.workers.map((worker) =>
+    candidateIds.has(worker.id) ? worker : { ...worker, status: "killed" as const },
+  );
+  const notes = [
+    `kept ${candidates.length} candidate(s)`,
+    `killed ${workers.filter((worker) => worker.status === "killed").length} worker(s)`,
+    `pruned ${duplicateIds.size} duplicate candidate(s)`,
+  ];
+
+  return { workers, candidates, judgeNotes: notes, interventionCycles: (state.interventionCycles ?? 0) + 1 };
 }
 
-/**
- * Judge the surviving candidates and pick a winner.
- */
 async function judge(state: JevState): Promise<Partial<JevState>> {
-  const winner = judgeCandidates(state.candidates.length ? state.candidates : state.workers);
-  return { winner };
+  const pool = state.candidates.length ? state.candidates : state.workers.filter(
+    (worker) => worker.status === "succeeded" && worker.content.trim().length > 0,
+  );
+  const decision = buildJudgeDecision(pool);
+  return { winner: decision.winner, judgeNotes: [...state.judgeNotes, ...decision.notes] };
 }
 
-export function buildJevGraph() {
+function routesForState(state: JevState): ModelRoute[] {
+  const logicalModels = state.models.length
+    ? state.models
+    : [...new Set(state.modelConfigs.map((route) => route.logicalModel))];
+  const routes = state.modelConfigs.length ? state.modelConfigs : defaultModelRoutes(logicalModels);
+  return logicalModels.flatMap((model) => resolveModelRoutes(model, routes));
+}
+
+export function buildJevGraph(options: JevGraphOptions) {
   const builder = new StateGraph(JevStateAnnotation)
-    .addNode("fanOut", fanOut)
+    .addNode("fanOut", (state) => fanOut(state, options))
     .addNode("inspect", inspect)
     .addNode("intervene", intervene)
     .addNode("judge", judge);

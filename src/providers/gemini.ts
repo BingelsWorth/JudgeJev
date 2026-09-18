@@ -1,14 +1,13 @@
-/**
- * Gemini provider — normalized to the JevModel interface.
- */
-
-import type { ChatChunk, ChatMessage, ChatRequest, ChatResponse, JevModel, TokenUsage } from "./types.js";
+import type { ChatChunk, ChatRequest, ChatResponse, JevModel, TokenUsage } from "./types.js";
+import { fetchOk, type RetryOptions } from "./errors.js";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export interface GeminiModelOptions {
   apiKey: string;
   baseUrl?: string;
+  logicalId?: string;
+  retry?: RetryOptions;
   fetch?: typeof fetch;
 }
 
@@ -16,28 +15,25 @@ export function createGeminiModel(
   modelId: string,
   options: GeminiModelOptions,
 ): JevModel {
-  const { apiKey, baseUrl = GEMINI_API_BASE, fetch = globalThis.fetch } = options;
+  const { apiKey, baseUrl = GEMINI_API_BASE, logicalId, retry, fetch = globalThis.fetch } = options;
 
   return {
     provider: "gemini",
     id: modelId,
+    logicalId,
 
     async *stream(request: ChatRequest): AsyncIterable<ChatChunk> {
       const body = toGeminiRequest(request);
-
-      const response = await retryWithBackoff(() =>
-        fetch(`${baseUrl}/models/${request.model}:streamGenerateContent?key=${apiKey}`, {
-          method: "POST",
-          signal: request.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }),
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:streamGenerateContent?alt=sse`, {
+            method: "POST",
+            signal: request.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        retry,
       );
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Gemini request failed: ${response.status} ${text}`);
-      }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response body");
@@ -55,23 +51,28 @@ export function createGeminiModel(
         while ((lineEnd = buffer.indexOf("\n")) >= 0) {
           const line = buffer.slice(0, lineEnd).trim();
           buffer = buffer.slice(lineEnd + 1);
+          const data = parseEventData(line);
+          if (!data) continue;
 
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-
-          let parsed: any;
+          let parsed: unknown;
           try {
             parsed = JSON.parse(data);
           } catch {
             continue;
           }
+          if (!isRecord(parsed)) continue;
 
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text) {
-            yield { contentDelta: text };
+          const candidate = Array.isArray(parsed.candidates) ? parsed.candidates[0] : undefined;
+          if (!isRecord(candidate)) continue;
+          const content = isRecord(candidate.content) ? candidate.content : undefined;
+          const parts = Array.isArray(content?.parts) ? content.parts : [];
+          for (const part of parts) {
+            if (isRecord(part) && typeof part.text === "string" && part.text) {
+              yield { contentDelta: part.text };
+            }
           }
-          if (parsed.candidates?.[0]?.finishReason) {
-            finishReason = mapFinishReason(parsed.candidates[0].finishReason);
+          if (typeof candidate.finishReason === "string") {
+            finishReason = mapFinishReason(candidate.finishReason);
           }
         }
       }
@@ -81,36 +82,39 @@ export function createGeminiModel(
 
     async complete(request: ChatRequest): Promise<ChatResponse> {
       const body = toGeminiRequest(request);
-
-      const response = await retryWithBackoff(() =>
-        fetch(`${baseUrl}/models/${request.model}:generateContent?key=${apiKey}`, {
-          method: "POST",
-          signal: request.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }),
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/models/${encodeURIComponent(request.model)}:generateContent`, {
+            method: "POST",
+            signal: request.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        retry,
       );
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Gemini request failed: ${response.status} ${text}`);
-      }
+      const json: unknown = await response.json();
+      if (!isRecord(json)) throw new Error("Gemini returned an invalid response");
+      const candidates = Array.isArray(json.candidates) ? json.candidates : [];
+      const firstCandidate = isRecord(candidates[0]) ? candidates[0] : undefined;
+      const content = isRecord(firstCandidate?.content) ? firstCandidate.content : undefined;
+      const parts = Array.isArray(content?.parts) ? content.parts : [];
+      const text = parts
+        .map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : ""))
+        .join("");
+      const usage = parseTokenUsage(json.usageMetadata);
 
-      const json: any = await response.json();
-      const content = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-      const usage: TokenUsage | undefined = json.usageMetadata
-        ? {
-            inputTokens: json.usageMetadata.promptTokenCount ?? 0,
-            outputTokens: json.usageMetadata.candidatesTokenCount ?? 0,
-          }
-        : undefined;
-
-      return { content, usage };
+      return { content: text, usage };
     },
   };
 }
 
-function toGeminiRequest(request: ChatRequest): any {
+function parseEventData(line: string): string | undefined {
+  if (line.toLowerCase().startsWith("data:")) return line.slice(5).trim();
+  return line || undefined;
+}
+
+function toGeminiRequest(request: ChatRequest): Record<string, unknown> {
   const systemInstruction = request.messages.find((m) => m.role === "system")?.content;
   const contents = request.messages
     .filter((m) => m.role !== "system")
@@ -143,17 +147,14 @@ function mapFinishReason(reason: string): ChatChunk["finishReason"] {
   }
 }
 
-async function retryWithBackoff<T>(fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      if (attempt < 2) {
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
-      }
-    }
-  }
-  throw lastError;
+function parseTokenUsage(value: unknown): TokenUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const inputTokens = Number(value.promptTokenCount ?? 0);
+  const outputTokens = Number(value.candidatesTokenCount ?? 0);
+  if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return undefined;
+  return { inputTokens, outputTokens };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

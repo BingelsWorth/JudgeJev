@@ -6,6 +6,8 @@ import { buildJevGraph } from "../src/graph/jev-graph.js";
 import { MemoryRunRepository } from "../src/runs/repository.js";
 import { judgeCandidates } from "../src/judge/judge.js";
 import type { WorkerAttempt } from "../src/graph/state.js";
+import type { ModelRoute } from "../src/providers/router.js";
+import type { JevModel } from "../src/providers/types.js";
 
 describe("judgeCandidates", () => {
   it("picks the only candidate", () => {
@@ -27,7 +29,7 @@ describe("judgeCandidates", () => {
 describe("MemoryRunRepository", () => {
   it("creates and retrieves a run", async () => {
     const repo = new MemoryRunRepository();
-    const run = await repo.create({ request: "x", models: [], workers: [], candidates: [], winner: null, judgeNotes: [], interventionCycles: 0 });
+    const run = await repo.create({ request: "x", models: [], modelConfigs: [], workers: [], candidates: [], winner: null, judgeNotes: [], interventionCycles: 0 });
     const fetched = await repo.get(run.id);
     expect(fetched?.state.request).toBe("x");
   });
@@ -35,10 +37,23 @@ describe("MemoryRunRepository", () => {
 
 describe("buildJevGraph", () => {
   it("runs a graph to completion", async () => {
-    const graph = buildJevGraph();
+    const routes: ModelRoute[] = [
+      { logicalModel: "gpt-4o", provider: "openai", upstreamModel: "gpt-4o" },
+      { logicalModel: "claude", provider: "anthropic", upstreamModel: "claude-3-5-sonnet-latest" },
+    ];
+    const graph = buildJevGraph({
+      modelFactory: async (route) => ({
+        provider: route.provider,
+        id: route.upstreamModel,
+        logicalId: route.logicalModel,
+        complete: async () => ({ content: route.provider === "openai" ? "short" : "a longer answer" }),
+        async *stream() {},
+      }) satisfies JevModel,
+    });
     const result = await graph.invoke({
       request: "what is 2+2?",
-      models: ["gpt-4o"],
+      models: ["gpt-4o", "claude"],
+      modelConfigs: routes,
       workers: [],
       candidates: [],
       winner: null,
@@ -46,7 +61,8 @@ describe("buildJevGraph", () => {
       interventionCycles: 0,
     });
     expect(result.interventionCycles).toBe(1);
-    expect(result.workers).toHaveLength(1);
-    expect(result.winner).not.toBeNull();
+    expect(result.workers).toHaveLength(2);
+    expect(result.workers.map((worker) => worker.status)).toEqual(["succeeded", "succeeded"]);
+    expect(result.winner?.model).toBe("claude");
   });
 });

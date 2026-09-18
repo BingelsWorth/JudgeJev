@@ -1,17 +1,13 @@
-/**
- * OpenAI provider — normalized to the JevModel interface.
- *
- * Borrowing the useful protocol logic from Monoize: streaming via SSE,
- * normalized content deltas, and retry/error/rate-limit handling.
- */
-
-import type { ChatChunk, ChatMessage, ChatRequest, ChatResponse, JevModel, TokenUsage } from "./types.js";
+import type { ChatChunk, ChatRequest, ChatResponse, JevModel, TokenUsage } from "./types.js";
+import { fetchOk, type RetryOptions } from "./errors.js";
 
 const OPENAI_API_BASE = "https://api.openai.com/v1";
 
 export interface OpenAIModelOptions {
   apiKey: string;
   baseUrl?: string;
+  logicalId?: string;
+  retry?: RetryOptions;
   fetch?: typeof fetch;
 }
 
@@ -19,35 +15,33 @@ export function createOpenAIModel(
   modelId: string,
   options: OpenAIModelOptions,
 ): JevModel {
-  const { apiKey, baseUrl = OPENAI_API_BASE, fetch = globalThis.fetch } = options;
+  const { apiKey, baseUrl = OPENAI_API_BASE, logicalId, retry, fetch = globalThis.fetch } = options;
 
   return {
     provider: "openai",
     id: modelId,
+    logicalId,
 
     async *stream(request: ChatRequest): AsyncIterable<ChatChunk> {
-      const response = await retryWithBackoff(() =>
-        fetch(`${baseUrl}/chat/completions`, {
-          method: "POST",
-          signal: request.signal,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: request.model,
-            messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
-            temperature: request.temperature,
-            max_tokens: request.maxTokens,
-            stream: true,
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model: request.model,
+              messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
+              temperature: request.temperature,
+              max_tokens: request.maxTokens,
+              stream: true,
+            }),
           }),
-        }),
+        retry,
       );
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`OpenAI request failed: ${response.status} ${text}`);
-      }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response body");
@@ -65,28 +59,27 @@ export function createOpenAIModel(
         while ((lineEnd = buffer.indexOf("\n")) >= 0) {
           const line = buffer.slice(0, lineEnd).trim();
           buffer = buffer.slice(lineEnd + 1);
-
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") {
-            finishReason = "stop";
+          const data = parseEventData(line);
+          if (!data || data === "[DONE]") {
+            if (data === "[DONE]") finishReason = "stop";
             continue;
           }
 
-          let parsed: any;
+          let parsed: unknown;
           try {
             parsed = JSON.parse(data);
           } catch {
             continue;
           }
+          if (!isRecord(parsed)) continue;
 
-          const choice = parsed.choices?.[0];
-          if (!choice) continue;
-
-          if (choice.delta?.content) {
-            yield { contentDelta: choice.delta.content };
+          const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+          if (!isRecord(choice)) continue;
+          const delta = isRecord(choice.delta) ? choice.delta : undefined;
+          if (typeof delta?.content === "string" && delta.content) {
+            yield { contentDelta: delta.content };
           }
-          if (choice.finish_reason) {
+          if (typeof choice.finish_reason === "string") {
             finishReason = mapFinishReason(choice.finish_reason);
           }
         }
@@ -96,38 +89,42 @@ export function createOpenAIModel(
     },
 
     async complete(request: ChatRequest): Promise<ChatResponse> {
-      const response = await retryWithBackoff(() =>
-        fetch(`${baseUrl}/chat/completions`, {
-          method: "POST",
-          signal: request.signal,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: request.model,
-            messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
-            temperature: request.temperature,
-            max_tokens: request.maxTokens,
-            stream: false,
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model: request.model,
+              messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
+              temperature: request.temperature,
+              max_tokens: request.maxTokens,
+              stream: false,
+            }),
           }),
-        }),
+        retry,
       );
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`OpenAI request failed: ${response.status} ${text}`);
-      }
-
-      const json: any = await response.json();
-      const content = json.choices?.[0]?.message?.content ?? "";
-      const usage: TokenUsage | undefined = json.usage
-        ? { inputTokens: json.usage.prompt_tokens, outputTokens: json.usage.completion_tokens }
-        : undefined;
+      const json: unknown = await response.json();
+      if (!isRecord(json)) throw new Error("OpenAI returned an invalid response");
+      const choices = Array.isArray(json.choices) ? json.choices : [];
+      const firstChoice = isRecord(choices[0]) ? choices[0] : undefined;
+      const message = isRecord(firstChoice?.message) ? firstChoice.message : undefined;
+      const content = typeof message?.content === "string" ? message.content : "";
+      const usage = parseTokenUsage(json.usage);
 
       return { content, usage };
     },
   };
+}
+
+function parseEventData(line: string): string | undefined {
+  if (!line.toLowerCase().startsWith("data:")) return undefined;
+  return line.slice(5).trim();
 }
 
 function mapFinishReason(reason: string): ChatChunk["finishReason"] {
@@ -145,17 +142,14 @@ function mapFinishReason(reason: string): ChatChunk["finishReason"] {
   }
 }
 
-async function retryWithBackoff<T>(fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      if (attempt < 2) {
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
-      }
-    }
-  }
-  throw lastError;
+function parseTokenUsage(value: unknown): TokenUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const inputTokens = Number(value.prompt_tokens);
+  const outputTokens = Number(value.completion_tokens);
+  if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return undefined;
+  return { inputTokens, outputTokens };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

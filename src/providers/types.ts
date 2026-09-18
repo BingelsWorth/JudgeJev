@@ -1,11 +1,3 @@
-/**
- * Normalized provider types for Judge Jev.
- *
- * All model providers (OpenAI, Anthropic, Gemini) are normalized into a
- * single `JevModel` interface so the rest of the service can talk to models
- * without caring about provider-specific protocol quirks.
- */
-
 export type ProviderId = "openai" | "anthropic" | "gemini";
 
 export interface ChatMessage {
@@ -15,6 +7,7 @@ export interface ChatMessage {
 
 export interface ChatRequest {
   model: string;
+  logicalModel?: string;
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
@@ -37,19 +30,16 @@ export interface ChatResponse {
 }
 
 export interface WorkerCheckpoint {
-  /** What the model thinks the task is. */
   taskInterpretation?: string;
-  /** Approach the model is taking. */
   approach?: string;
-  /** Assumptions the model is making. */
   assumptions?: string[];
-  /** Progress made so far. */
   progress?: string;
 }
 
 export interface JevModel {
   provider: ProviderId;
   id: string;
+  logicalId?: string;
   stream(request: ChatRequest): AsyncIterable<ChatChunk>;
   complete(request: ChatRequest): Promise<ChatResponse>;
 }

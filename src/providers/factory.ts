@@ -1,17 +1,25 @@
-/**
- * Provider factory — build a normalized JevModel from BYOT credentials.
- */
-
-import type { JevModel } from "./types.js";
+import type { JevModel, ProviderId } from "./types.js";
+import type { ModelRoute } from "./router.js";
 import { createOpenAIModel, type OpenAIModelOptions } from "./openai.js";
 import { createAnthropicModel, type AnthropicModelOptions } from "./anthropic.js";
 import { createGeminiModel, type GeminiModelOptions } from "./gemini.js";
 import type { CredentialStore } from "../auth/credentials.js";
 
 export interface ProviderConfig {
-  provider: "openai" | "anthropic" | "gemini";
+  provider: ProviderId;
   model: string;
+  logicalModel?: string;
   apiKey?: string;
+  baseUrl?: string;
+}
+
+export function configFromRoute(route: ModelRoute, apiKey?: string): ProviderConfig {
+  return {
+    provider: route.provider,
+    model: route.upstreamModel,
+    logicalModel: route.logicalModel,
+    apiKey,
+  };
 }
 
 export async function buildModel(
@@ -25,12 +33,22 @@ export async function buildModel(
 
   switch (config.provider) {
     case "openai":
-      return createOpenAIModel(config.model, { apiKey } as OpenAIModelOptions);
+      return createOpenAIModel(config.model, {
+        apiKey,
+        baseUrl: config.baseUrl,
+        logicalId: config.logicalModel,
+      });
     case "anthropic":
-      return createAnthropicModel(config.model, { apiKey } as AnthropicModelOptions);
+      return createAnthropicModel(config.model, {
+        apiKey,
+        baseUrl: config.baseUrl,
+        logicalId: config.logicalModel,
+      });
     case "gemini":
-      return createGeminiModel(config.model, { apiKey } as GeminiModelOptions);
-    default:
-      throw new Error(`Unsupported provider: ${(config as any).provider}`);
+      return createGeminiModel(config.model, {
+        apiKey,
+        baseUrl: config.baseUrl,
+        logicalId: config.logicalModel,
+      });
   }
 }

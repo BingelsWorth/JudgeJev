@@ -1,28 +1,13 @@
-/**
- * LangGraph state schema for Judge Jev.
- *
- * A `JevRun` represents one user request being evaluated across multiple
- * model workers. The graph fans out to workers, inspects their checkpoints,
- * and prunes/restarts/branches as needed.
- */
-
 import { Annotation } from "@langchain/langgraph";
-
-export interface WorkerCheckpoint {
-  /** What the model thinks the task is. */
-  taskInterpretation?: string;
-  /** Approach the model is taking. */
-  approach?: string;
-  /** Assumptions the model is making. */
-  assumptions?: string[];
-  /** Progress made so far. */
-  progress?: string;
-}
+import type { ProviderId } from "../providers/types.js";
+import type { WorkerCheckpoint } from "../providers/types.js";
+import type { ModelRoute } from "../providers/router.js";
 
 export interface WorkerAttempt {
   id: string;
   model: string;
-  provider: "openai" | "anthropic" | "gemini";
+  upstreamModel?: string;
+  provider: ProviderId;
   status: "pending" | "running" | "succeeded" | "failed" | "killed";
   content: string;
   checkpoint?: WorkerCheckpoint;
@@ -31,39 +16,37 @@ export interface WorkerAttempt {
 }
 
 export interface JevRunState {
-  /** The original user request. */
   request: string;
-  /** BYOT / model config used for this run. */
   models: string[];
-  /** Active workers competing to answer the request. */
+  modelConfigs: ModelRoute[];
   workers: WorkerAttempt[];
-  /** Surviving candidates after pruning. */
   candidates: WorkerAttempt[];
-  /** Final judged winner, if any. */
   winner: WorkerAttempt | null;
-  /** Free-form notes from the judge. */
   judgeNotes: string[];
-  /** Number of intervention cycles applied. */
   interventionCycles: number;
 }
 
 export const JevStateAnnotation = Annotation.Root({
   request: Annotation<string>(),
   models: Annotation<string[]>({
-    reducer: (left: string[], right: string[]) => [...left, ...right],
+    reducer: (_left: string[], right: string[]) => right,
+    default: () => [],
+  }),
+  modelConfigs: Annotation<ModelRoute[]>({
+    reducer: (_left: ModelRoute[], right: ModelRoute[]) => right,
     default: () => [],
   }),
   workers: Annotation<WorkerAttempt[]>({
-    reducer: (left: WorkerAttempt[], right: WorkerAttempt[]) => [...left, ...right],
+    reducer: (_left: WorkerAttempt[], right: WorkerAttempt[]) => right,
     default: () => [],
   }),
   candidates: Annotation<WorkerAttempt[]>({
-    reducer: (left: WorkerAttempt[], right: WorkerAttempt[]) => [...left, ...right],
+    reducer: (_left: WorkerAttempt[], right: WorkerAttempt[]) => right,
     default: () => [],
   }),
   winner: Annotation<WorkerAttempt | null>(),
   judgeNotes: Annotation<string[]>({
-    reducer: (left: string[], right: string[]) => [...left, ...right],
+    reducer: (_left: string[], right: string[]) => right,
     default: () => [],
   }),
   interventionCycles: Annotation<number>(),

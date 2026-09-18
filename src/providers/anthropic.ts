@@ -1,8 +1,5 @@
-/**
- * Anthropic provider — normalized to the JevModel interface.
- */
-
 import type { ChatChunk, ChatMessage, ChatRequest, ChatResponse, JevModel, TokenUsage } from "./types.js";
+import { fetchOk, type RetryOptions } from "./errors.js";
 
 const ANTHROPIC_API_BASE = "https://api.anthropic.com";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -10,6 +7,8 @@ const ANTHROPIC_VERSION = "2023-06-01";
 export interface AnthropicModelOptions {
   apiKey: string;
   baseUrl?: string;
+  logicalId?: string;
+  retry?: RetryOptions;
   fetch?: typeof fetch;
 }
 
@@ -17,38 +16,35 @@ export function createAnthropicModel(
   modelId: string,
   options: AnthropicModelOptions,
 ): JevModel {
-  const { apiKey, baseUrl = ANTHROPIC_API_BASE, fetch = globalThis.fetch } = options;
+  const { apiKey, baseUrl = ANTHROPIC_API_BASE, logicalId, retry, fetch = globalThis.fetch } = options;
 
   return {
     provider: "anthropic",
     id: modelId,
+    logicalId,
 
     async *stream(request: ChatRequest): AsyncIterable<ChatChunk> {
       const { system, messages } = splitSystem(request.messages);
-
-      const response = await retryWithBackoff(() =>
-        fetch(`${baseUrl}/v1/messages`, {
-          method: "POST",
-          signal: request.signal,
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": ANTHROPIC_VERSION,
-          },
-          body: JSON.stringify({
-            model: request.model,
-            messages,
-            system,
-            max_tokens: request.maxTokens ?? 1024,
-            stream: true,
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/v1/messages`, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": ANTHROPIC_VERSION,
+            },
+            body: JSON.stringify({
+              model: request.model,
+              messages,
+              system,
+              max_tokens: request.maxTokens ?? 1024,
+              stream: true,
+            }),
           }),
-        }),
+        retry,
       );
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Anthropic request failed: ${response.status} ${text}`);
-      }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response body");
@@ -66,22 +62,28 @@ export function createAnthropicModel(
         while ((lineEnd = buffer.indexOf("\n")) >= 0) {
           const line = buffer.slice(0, lineEnd).trim();
           buffer = buffer.slice(lineEnd + 1);
+          const data = parseEventData(line);
+          if (!data) continue;
 
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-
-          let parsed: any;
+          let parsed: unknown;
           try {
             parsed = JSON.parse(data);
           } catch {
             continue;
           }
+          if (!isRecord(parsed)) continue;
 
-          if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-            yield { contentDelta: parsed.delta.text };
+          if (parsed.type === "content_block_delta") {
+            const delta = isRecord(parsed.delta) ? parsed.delta : undefined;
+            if (typeof delta?.text === "string" && delta.text) {
+              yield { contentDelta: delta.text };
+            }
           }
-          if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
-            finishReason = mapFinishReason(parsed.delta.stop_reason);
+          if (parsed.type === "message_delta") {
+            const delta = isRecord(parsed.delta) ? parsed.delta : undefined;
+            if (typeof delta?.stop_reason === "string") {
+              finishReason = mapFinishReason(delta.stop_reason);
+            }
           }
         }
       }
@@ -91,36 +93,34 @@ export function createAnthropicModel(
 
     async complete(request: ChatRequest): Promise<ChatResponse> {
       const { system, messages } = splitSystem(request.messages);
-
-      const response = await retryWithBackoff(() =>
-        fetch(`${baseUrl}/v1/messages`, {
-          method: "POST",
-          signal: request.signal,
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": ANTHROPIC_VERSION,
-          },
-          body: JSON.stringify({
-            model: request.model,
-            messages,
-            system,
-            max_tokens: request.maxTokens ?? 1024,
-            stream: false,
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/v1/messages`, {
+            method: "POST",
+            signal: request.signal,
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": ANTHROPIC_VERSION,
+            },
+            body: JSON.stringify({
+              model: request.model,
+              messages,
+              system,
+              max_tokens: request.maxTokens ?? 1024,
+              stream: false,
+            }),
           }),
-        }),
+        retry,
       );
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Anthropic request failed: ${response.status} ${text}`);
-      }
-
-      const json: any = await response.json();
-      const content = json.content?.[0]?.text ?? "";
-      const usage: TokenUsage | undefined = json.usage
-        ? { inputTokens: json.usage.input_tokens, outputTokens: json.usage.output_tokens }
-        : undefined;
+      const json: unknown = await response.json();
+      if (!isRecord(json)) throw new Error("Anthropic returned an invalid response");
+      const contentBlocks = Array.isArray(json.content) ? json.content : [];
+      const content = contentBlocks
+        .map((block) => (isRecord(block) && typeof block.text === "string" ? block.text : ""))
+        .join("");
+      const usage = parseTokenUsage(json.usage);
 
       return { content, usage };
     },
@@ -128,16 +128,21 @@ export function createAnthropicModel(
 }
 
 function splitSystem(messages: ChatMessage[]): { system?: string; messages: ChatMessage[] } {
-  let system: string | undefined;
+  const systems: string[] = [];
   const rest: ChatMessage[] = [];
-  for (const m of messages) {
-    if (m.role === "system") {
-      system = m.content;
+  for (const message of messages) {
+    if (message.role === "system") {
+      systems.push(message.content);
     } else {
-      rest.push(m);
+      rest.push(message);
     }
   }
-  return { system, messages: rest };
+  return { system: systems.join("\n\n") || undefined, messages: rest };
+}
+
+function parseEventData(line: string): string | undefined {
+  if (!line.toLowerCase().startsWith("data:")) return undefined;
+  return line.slice(5).trim();
 }
 
 function mapFinishReason(reason: string): ChatChunk["finishReason"] {
@@ -152,17 +157,14 @@ function mapFinishReason(reason: string): ChatChunk["finishReason"] {
   }
 }
 
-async function retryWithBackoff<T>(fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      if (attempt < 2) {
-        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
-      }
-    }
-  }
-  throw lastError;
+function parseTokenUsage(value: unknown): TokenUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const inputTokens = Number(value.input_tokens);
+  const outputTokens = Number(value.output_tokens);
+  if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return undefined;
+  return { inputTokens, outputTokens };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
