@@ -78,15 +78,15 @@ The current implementation already has concurrent non-streaming fan-out, basic d
 
 #### Chunk A — Proxy API contract and entrypoint
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** Chunk 0
-- [ ] **Files:** `src/index.ts`, `src/api/` (new, if needed), `test/api.test.ts` (new)
-- [ ] Add or confirm the v1 proxy endpoints and map each downstream request into the shared v1 request type.
-- [ ] Add downstream authentication, body limits, validation, timeout, and client-facing error behavior.
-- [ ] Return the selected winner in the original downstream response shape.
-- [ ] Keep SSE, response retrieval, Files, Vector Store, and local response-history APIs out of v1.
-- [ ] Keep existing `/runs` endpoints compatible unless the Chunk 0 contract explicitly replaces them.
-- [ ] **Exit criteria:** API tests cover success, auth, validation, upstream errors, and the non-streaming response contract.
+- [x] **Owner:** Kilo
+- [x] **Dependencies:** Chunk 0
+- [x] **Files:** `src/index.ts`, `src/api/v1.ts`, `test/api.test.ts`
+- [x] Add or confirm the v1 proxy endpoints and map each downstream request into the shared v1 request type.
+- [x] Add downstream authentication, body limits, validation, timeout, and client-facing error behavior.
+- [x] Return the selected winner in the original downstream response shape.
+- [x] Keep SSE, response retrieval, Files, Vector Store, and local response-history APIs out of v1.
+- [x] Keep existing `/runs` endpoints compatible unless the Chunk 0 contract explicitly replaces them.
+- [x] **Exit criteria:** API tests cover success, auth, validation, upstream errors, and the non-streaming response contract.
 
 #### Chunk B — Provider completion and candidate normalization
 
