@@ -28,6 +28,9 @@ type Bindings = {
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  ANTHROPIC_BASE_URL?: string;
+  GEMINI_BASE_URL?: string;
 };
 
 interface ModelRouteInput {

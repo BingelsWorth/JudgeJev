@@ -88,6 +88,8 @@ The current implementation already has concurrent non-streaming fan-out, basic d
 - [x] Keep existing `/runs` endpoints compatible unless the Chunk 0 contract explicitly replaces them.
 - [x] **Exit criteria:** API tests cover success, auth, validation, upstream errors, and the non-streaming response contract.
 
+**Chunk A results:** Implemented `createV1Router()` in `src/api/v1.ts` with three endpoints (`/v1/responses`, `/v1/chat/completions`, `/v1/messages`), request validation via Zod schemas, provider API key resolution, model config normalization, graph invocation with `buildJevGraph`, winner response building per protocol, and error mapping to typed `V1Error` responses. Mounted in `src/index.ts:52`. 16 tests in `test/api.test.ts` cover all endpoints, validation (400), auth (401), rate limit (429), network (503), internal (500), and no-candidates (502). `npm test` = 118/118, `npm run typecheck`, `npm run build`, and `git diff --check` pass. No commit has been made.
+
 #### Chunk B — Provider completion and candidate normalization
 
 - [x] **Owner:** Kilo

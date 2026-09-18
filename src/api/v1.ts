@@ -34,6 +34,9 @@ interface V1ApiBindings {
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  ANTHROPIC_BASE_URL?: string;
+  GEMINI_BASE_URL?: string;
   JEV_API_ENDPOINT?: string;
   JEV_API_KEY?: string;
 }
@@ -52,30 +55,30 @@ interface V1RequestBody {
   modelConfigs?: V1RouteConfig[];
 }
 
-function getProviderApiKey(env: V1ApiBindings, provider: string): string | undefined {
+function getProviderConfig(env: V1ApiBindings, provider: string): { apiKey: string | undefined; baseUrl: string | undefined } {
   switch (provider) {
     case "openai":
-      return env.OPENAI_API_KEY;
+      return { apiKey: env.OPENAI_API_KEY, baseUrl: env.OPENAI_BASE_URL };
     case "anthropic":
-      return env.ANTHROPIC_API_KEY;
+      return { apiKey: env.ANTHROPIC_API_KEY, baseUrl: env.ANTHROPIC_BASE_URL };
     case "gemini":
-      return env.GEMINI_API_KEY;
+      return { apiKey: env.GEMINI_API_KEY, baseUrl: env.GEMINI_BASE_URL };
     default:
-      return undefined;
+      return { apiKey: undefined, baseUrl: undefined };
   }
 }
 
 function buildV1Graph(env: V1ApiBindings) {
   return buildJevGraph({
     modelFactory: async (route: ModelRoute) => {
-      const apiKey = getProviderApiKey(env, route.provider);
+      const { apiKey, baseUrl } = getProviderConfig(env, route.provider);
       if (!apiKey) {
         throw new Error(`No API key configured for provider: ${route.provider}`);
       }
 
       const { buildModel, configFromRoute } = await import("../providers/factory.js");
-      return buildModel(configFromRoute(route, apiKey), {
-        get: async (provider: string) => getProviderApiKey(env, provider) ?? "",
+      return buildModel({ ...configFromRoute(route, apiKey), baseUrl }, {
+        get: async (provider: string) => getProviderConfig(env, provider).apiKey ?? "",
       } as any);
     },
   });
