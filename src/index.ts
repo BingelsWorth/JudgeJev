@@ -20,6 +20,7 @@ import { defaultModelRoutes } from "./providers/router.js";
 import type { JevRunState } from "./graph/state.js";
 import type { ModelRoute } from "./providers/router.js";
 import type { ProviderId } from "./providers/types.js";
+import { createV1Router } from "./api/v1.js";
 
 type Bindings = {
   JUDGE_JEV_RUNS?: D1Database;
@@ -48,12 +49,17 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", cors());
 
+app.route("/", createV1Router());
+
 app.get("/", (c) =>
   c.json({
     service: "judge-jev",
     version: "0.2.0",
     endpoints: [
       "GET  /health",
+      "POST /v1/responses",
+      "POST /v1/chat/completions",
+      "POST /v1/messages",
       "POST /runs",
       "GET  /runs",
       "GET  /runs/:id",

@@ -101,15 +101,17 @@ The current implementation already has concurrent non-streaming fan-out, basic d
 
 #### Chunk C — Routing, retry, and fail-forward behavior
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** Chunk 0
-- [ ] **Files:** `src/providers/router.ts`, `src/providers/errors.ts`, `src/providers/factory.ts`, `test/routing-errors.test.ts` (new)
-- [ ] Resolve logical-model routes using provider/upstream model mapping, aliases, priority, and enabled flags.
-- [ ] Retry transient network failures, timeouts, `408`, `429`, and `5xx` responses with `Retry-After`, exponential backoff, jitter, and a request-wide attempt budget.
-- [ ] Do not retry authentication, authorization, validation, unsupported-model, or other persistent failures on the same channel.
-- [ ] Fail forward to the next eligible route and return a sanitized error when no candidate succeeds.
-- [ ] Keep weighted routing, route health, circuit breakers, session affinity, and durable routing state for later.
-- [ ] **Exit criteria:** tests cover route resolution, retry classification, `Retry-After`, attempt budgets, fail-forward, and persistent errors.
+- [x] **Owner:** Kilo
+- [x] **Dependencies:** Chunk 0
+- [x] **Files:** `src/providers/router.ts`, `src/providers/errors.ts`, `src/providers/factory.ts`, `test/routing-errors.test.ts` (new)
+- [x] Resolve logical-model routes using provider/upstream model mapping, aliases, priority, and enabled flags.
+- [x] Retry transient network failures, timeouts, `408`, `429`, and `5xx` responses with `Retry-After`, exponential backoff, jitter, and a request-wide attempt budget.
+- [x] Do not retry authentication, authorization, validation, unsupported-model, or other persistent failures on the same channel.
+- [x] Fail forward to the next eligible route and return a sanitized error when no candidate succeeds.
+- [x] Keep weighted routing, route health, circuit breakers, session affinity, and durable routing state for later.
+- [x] **Exit criteria:** tests cover route resolution, retry classification, `Retry-After`, attempt budgets, fail-forward, and persistent errors.
+
+**Chunk C results:** 18 new tests in `test/routing-errors.test.ts` cover `resolveModelRoutes` (alias/priority/enabled), `defaultModelRoutes`, `resolveRoutesForState`, `classifyRetryableFailure` (rate_limited/transient/persistent), `UpstreamError.retryable` + `retryAfterMs`, `retryWithBackoff` (transient retry, `Retry-After` precedence, no-retry on persistent, attempt budget), and `isRetryableError` (abort/persistent/transient). `npm test` = 31/31, `npm run typecheck` and `npm run build` pass.
 
 ### Wave 2 — Parallel integration chunks
 
