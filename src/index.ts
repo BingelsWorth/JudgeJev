@@ -25,6 +25,21 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", cors());
 
+app.get("/", (c) =>
+  c.json({
+    service: "judge-jev",
+    version: "0.1.0",
+    endpoints: [
+      "GET  /health",
+      "POST /runs",
+      "GET  /runs",
+      "GET  /runs/:id",
+      "DELETE /runs/:id",
+      "POST /runs/:id/judge",
+    ],
+  }),
+);
+
 app.get("/health", (c) => {
   return c.json({ status: "ok", service: "judge-jev", version: "0.1.0" });
 });
