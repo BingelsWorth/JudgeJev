@@ -63,14 +63,16 @@ The current implementation already has concurrent non-streaming fan-out, basic d
 
 ### Chunk 0 — Establish the v1 contracts (prerequisite)
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** none
-- [ ] **Files:** `src/v1/contracts.ts` (new), `test/fixtures/v1-contracts.ts` (new, if useful)
-- [ ] Define the non-streaming downstream request, candidate, Jev judging request/response, winner, error, usage, and model metadata types.
-- [ ] Define the initial generic coding-quality rubric/questions and the rule that the selected candidate is returned unchanged in the original downstream response shape.
-- [ ] Define the supported endpoint matrix for `POST /v1/responses`, `POST /v1/chat/completions`, and `POST /v1/messages`.
-- [ ] Add fixtures or type-level examples that the later chunks can share without duplicating shapes.
-- [ ] **Exit criteria:** contracts compile, are unambiguous, and contain no streaming or intervention state.
+- [x] **Owner:** Kilo
+- [x] **Dependencies:** none
+- [x] **Files:** `src/v1/contracts.ts` (new), `test/fixtures/v1-contracts.ts` (new), `test/v1-contracts.test.ts` (new)
+- [x] Define the non-streaming downstream request, candidate, Jev judging request/response, winner, error, usage, and model metadata types.
+- [x] Define the initial generic coding-quality rubric/questions and the rule that the selected candidate is returned unchanged in the original downstream response shape.
+- [x] Define the supported endpoint matrix for `POST /v1/responses`, `POST /v1/chat/completions`, and `POST /v1/messages`.
+- [x] Add fixtures or type-level examples that the later chunks can share without duplicating shapes.
+- [x] **Exit criteria:** contracts compile, are unambiguous, and contain no streaming or intervention state.
+
+**Chunk 0 decisions:** `V1ProviderId` reuses the existing provider identity type; request, attempt, Jev, and winner records share `requestId`; attempts preserve failed routes; winner records retain the original request and response with `policy: "passthrough"`; endpoint parsing is provided by `parseV1EndpointPath` and `getV1EndpointContract`.
 
 ### Wave 1 — Parallel implementation chunks
 
@@ -189,6 +191,8 @@ Use these upstream areas as the reference for v1's non-streaming pieces. Streami
 
 ## Current validation
 
-- `npm test`: 5/5 passing on the last run.
+- `npm test`: 13/13 passing on the last run, including 8 focused v1 contract tests.
 - `npm run typecheck`: passing on the last run.
+- `npm run build`: passing on the last run.
+- `git diff --check`: passing on the last run.
 - No commit has been made.
