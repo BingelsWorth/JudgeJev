@@ -17,16 +17,18 @@ async function testSingleRequest() {
   console.log(`Testing single request to ${VLLM_BASE_URL}...`);
   
   const model = await buildModel(
-    configFromRoute({
+    { ...configFromRoute({
       logicalModel: "gpt-4o",
       provider: "openai",
       upstreamModel: "gpt-4o",
       priority: 0,
       enabled: true,
-    }, VLLM_API_KEY),
-    { baseUrl: VLLM_BASE_URL }
+    }, VLLM_API_KEY), baseUrl: VLLM_BASE_URL },
+    new MemoryCredentialStore()
   );
 
+  console.log(`  Model created: ${model.provider}/${model.id}`);
+  
   const result = await model.complete({
     messages: [{ role: "user", content: "Say hello in one word" }],
     temperature: 0,
@@ -49,7 +51,7 @@ async function testFanout() {
 
   const graph = buildJevGraph({
     modelFactory: async (route) => {
-      return buildModel(configFromRoute(route, VLLM_API_KEY), { baseUrl: VLLM_BASE_URL });
+      return buildModel({ ...configFromRoute(route, VLLM_API_KEY), baseUrl: VLLM_BASE_URL }, new MemoryCredentialStore());
     },
   });
 
@@ -95,6 +97,7 @@ async function main() {
     console.log("\n✓ All integration tests passed!");
   } catch (err) {
     console.error("\n✗ Integration test failed:", err.message);
+    if (err.cause) console.error("  Cause:", err.cause);
     process.exit(1);
   }
 }
