@@ -51,58 +51,117 @@ Monoize remains the reference for the non-streaming pieces: protocol conversion,
 
 The current implementation already has concurrent non-streaming fan-out, basic duplicate pruning, and shared retry/error handling. The remaining v1 work is limited to the proxy contract, complete candidate normalization, the actual Jev judging call, and focused plumbing validation.
 
-## Remaining Work
+## Parallel work plan
 
-### 1. Define the v1 proxy contract
+### Handoff rules for every chunk
 
-- [ ] Confirm the supported downstream endpoints: `POST /v1/responses`, `POST /v1/chat/completions`, and `POST /v1/messages`.
-- [ ] Define typed request, response, error, usage, and model metadata boundaries for each supported protocol.
-- [ ] Define authentication, body limits, validation failures, timeouts, and client-facing error envelopes.
-- [ ] Keep response retrieval, Files, Vector Store, and local response-history APIs out of v1.
-- [ ] Document the proxy contract and provide minimal curl examples.
+- Treat this file as the source of truth between agent prompts. Record decisions, assumptions, file references, validation results, and follow-ups in the owning chunk.
+- An agent owns only the files listed for its chunk. Do not modify another chunk's files without recording the boundary change here first.
+- Each implementation chunk owns its focused tests and runs `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check` before handoff.
+- Do not implement deferred streaming, live intervention, durable graph state, or product-surface work in a v1 chunk.
+- If a shared contract or file boundary must change, stop and record the proposed change here before editing it.
 
-### 2. Normalize and fan out provider calls
+### Chunk 0 — Establish the v1 contracts (prerequisite)
 
-- [ ] Define a canonical typed candidate shape that carries the text, tools, reasoning, refusals, usage, finish metadata, and provider metadata needed by Jev.
-- [ ] Run all configured provider/model attempts concurrently.
-- [ ] Wait for every attempt to complete or fail before judging; preserve per-attempt errors without emitting partial output.
-- [ ] Normalize complete responses and prune exact duplicates.
-- [ ] Ensure v1 emits no streaming events and never switches providers after output begins.
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** none
+- [ ] **Files:** `src/v1/contracts.ts` (new), `test/fixtures/v1-contracts.ts` (new, if useful)
+- [ ] Define the non-streaming downstream request, candidate, Jev judging request/response, winner, error, usage, and model metadata types.
+- [ ] Define the initial generic coding-quality rubric/questions and the rule that the selected candidate is returned unchanged in the original downstream response shape.
+- [ ] Define the supported endpoint matrix for `POST /v1/responses`, `POST /v1/chat/completions`, and `POST /v1/messages`.
+- [ ] Add fixtures or type-level examples that the later chunks can share without duplicating shapes.
+- [ ] **Exit criteria:** contracts compile, are unambiguous, and contain no streaming or intervention state.
 
-### 3. Integrate the actual Jev judging endpoint
+### Wave 1 — Parallel implementation chunks
 
-- [ ] Define a type-safe Jev request containing the original request, candidate responses, and an initial generic coding-quality rubric/questions.
-- [ ] Define a type-safe Jev response containing the selected candidate ID and any metadata needed to reconstruct the downstream response.
-- [ ] Call the configured actual Jev endpoint only after the fan-out barrier.
-- [ ] Return the selected candidate unchanged in the original downstream response shape.
-- [ ] Validate winner selection with a generic coding question before introducing the final question matrix.
-- [ ] Keep prefill-derived question/context selection and the final rubric deferred until after v1.
+#### Chunk A — Proxy API contract and entrypoint
 
-### 4. Port the required non-streaming gateway behavior
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** Chunk 0
+- [ ] **Files:** `src/index.ts`, `src/api/` (new, if needed), `test/api.test.ts` (new)
+- [ ] Add or confirm the v1 proxy endpoints and map each downstream request into the shared v1 request type.
+- [ ] Add downstream authentication, body limits, validation, timeout, and client-facing error behavior.
+- [ ] Return the selected winner in the original downstream response shape.
+- [ ] Keep SSE, response retrieval, Files, Vector Store, and local response-history APIs out of v1.
+- [ ] Keep existing `/runs` endpoints compatible unless the Chunk 0 contract explicitly replaces them.
+- [ ] **Exit criteria:** API tests cover success, auth, validation, upstream errors, and the non-streaming response contract.
 
-- [ ] Use logical-model routing with provider/upstream model mapping, aliases, priority, and enabled flags.
+#### Chunk B — Provider completion and candidate normalization
+
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** Chunk 0
+- [ ] **Files:** `src/providers/types.ts`, `src/providers/openai.ts`, `src/providers/anthropic.ts`, `src/providers/gemini.ts`, `test/providers.test.ts` (new)
+- [ ] Keep the v1 path non-streaming and normalize each provider's complete response into the shared candidate type.
+- [ ] Preserve text, usage, finish metadata, provider metadata, and structured fields required by the judging contract.
+- [ ] Convert provider failures into the shared error classification without exposing credentials or provider internals.
+- [ ] Do not change routing policy or implement streaming behavior in this chunk.
+- [ ] **Exit criteria:** provider tests cover OpenAI, Anthropic, Gemini, malformed responses, usage, and failure classification.
+
+#### Chunk C — Routing, retry, and fail-forward behavior
+
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** Chunk 0
+- [ ] **Files:** `src/providers/router.ts`, `src/providers/errors.ts`, `src/providers/factory.ts`, `test/routing-errors.test.ts` (new)
+- [ ] Resolve logical-model routes using provider/upstream model mapping, aliases, priority, and enabled flags.
 - [ ] Retry transient network failures, timeouts, `408`, `429`, and `5xx` responses with `Retry-After`, exponential backoff, jitter, and a request-wide attempt budget.
 - [ ] Do not retry authentication, authorization, validation, unsupported-model, or other persistent failures on the same channel.
 - [ ] Fail forward to the next eligible route and return a sanitized error when no candidate succeeds.
-- [ ] Keep weighted routing, route health, circuit breakers, session affinity, and durable routing state for later unless required by the initial flow.
+- [ ] Keep weighted routing, route health, circuit breakers, session affinity, and durable routing state for later.
+- [ ] **Exit criteria:** tests cover route resolution, retry classification, `Retry-After`, attempt budgets, fail-forward, and persistent errors.
 
-### 5. Add focused v1 tests
+### Wave 2 — Parallel integration chunks
 
-- [ ] Test concurrent fan-out and the all-attempts completion barrier.
-- [ ] Test candidate normalization, duplicate pruning, and per-attempt failure reporting.
-- [ ] Test transient retry classification, `Retry-After`, fail-forward, and persistent-error handling.
-- [ ] Test the type-safe Jev request payload, winner response, and downstream response mapping.
-- [ ] Test proxy authentication, validation, errors, and the absence of streaming behavior.
-- [ ] Run a generic coding-question end-to-end test through fan-out, Jev selection, and the original caller response.
+#### Chunk D — Fan-out barrier and graph orchestration
 
-### 6. Final validation
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** Chunks 0, B, and C
+- [ ] **Files:** `src/graph/state.ts`, `src/graph/jev-graph.ts`, `src/graph/fanout.ts` (new, if useful), `test/judge.test.ts`
+- [ ] Run every configured provider/model attempt concurrently and wait for all attempts to complete or fail before judging.
+- [ ] Preserve per-attempt failures, normalize successful responses, and prune exact duplicates without emitting partial output.
+- [ ] Remove or bypass live `inspect`/`intervene` behavior for v1; do not add checkpoints, restart, redirect, or branching.
+- [ ] Call the shared judge port after the fan-out barrier and keep the graph compatible with the actual Jev client from Chunk E.
+- [ ] **Exit criteria:** graph tests prove the all-attempts barrier, candidate pruning, failure handling, and absence of partial-output fallback.
 
-- [ ] Run `npm test`.
-- [ ] Run `npm run typecheck`.
-- [ ] Run the configured build command.
+#### Chunk E — Actual Jev judging endpoint
+
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** Chunk 0 and the judge port defined by Chunk D
+- [ ] **Files:** `src/judge/judge.ts`, `src/jev/client.ts` (new), `test/jev-client.test.ts` (new)
+- [ ] Replace the current longest-content heuristic with a type-safe client for the configured actual Jev endpoint.
+- [ ] Send the original request, candidates, and initial generic coding-quality rubric/questions after the fan-out barrier.
+- [ ] Decode the selected candidate ID and metadata without exposing hidden chain-of-thought.
+- [ ] Keep prefill-derived question/context selection and the final question matrix/rubric deferred until after v1.
+- [ ] **Exit criteria:** fake-fetch tests cover the request payload, winner response, endpoint errors, and unchanged-winner mapping contract.
+
+### Wave 3 — Parallel validation chunks
+
+#### Chunk F — End-to-end v1 plumbing tests
+
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** Chunks A through E
+- [ ] **Files:** `test/v1-e2e.test.ts` (new), `test/fixtures/` (new, if needed)
+- [ ] Run a generic coding-question request through the proxy, mocked providers, fan-out barrier, mocked Jev endpoint, and original caller response.
+- [ ] Verify all attempts complete before judging, the winner is returned unchanged, failures are sanitized, and no streaming events are emitted.
+- [ ] **Exit criteria:** one end-to-end test exercises the complete v1 path with no live credentials required.
+
+#### Chunk G — Documentation, configuration, and local validation
+
+- [ ] **Owner:** unassigned
+- [ ] **Dependencies:** Chunks A through E
+- [ ] **Files:** `README.md`, `env.template`, `wrangler.jsonc`, `Justfile` (only if a recipe is missing)
+- [ ] Document the v1 endpoints, authentication, provider configuration, Jev endpoint configuration, and local development commands.
+- [ ] Add only the environment variables and Wrangler bindings required by the completed v1 contract.
 - [ ] Run local proxy smoke tests with mocked or configured providers and Jev.
-- [ ] Run `git diff --check` and review the final diff.
-- [ ] Update `README.md`, `env.template`, and Wrangler configuration for the completed v1 contract.
+- [ ] **Exit criteria:** documentation and configuration match the implemented contract; `just dev`, `just test`, `just typecheck`, and `just build` are usable.
+
+### Parallelization map
+
+| Wave | Chunks | Start condition |
+| --- | --- | --- |
+| 0 | Chunk 0 | Start first; all other chunks wait for its contracts |
+| 1 | Chunks A, B, C | Run in parallel after Chunk 0 |
+| 2 | Chunks D, E | Run in parallel after their listed dependencies |
+| 3 | Chunks F, G | Run in parallel after Chunks A through E |
 
 ## Future work after v1
 
