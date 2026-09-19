@@ -24,9 +24,6 @@ import { createV1Router } from "./api/proxy.js";
 type Bindings = {
   JUDGE_JEV_RUNS?: D1Database;
   JEV_API_KEY?: string;
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
-  GEMINI_API_KEY?: string;
   /** Default route registrations (endpoint + token + fan-out dict per entry), same JSON array shape as the request body's `modelConfigs`. Used when a request doesn't supply its own. */
   MODEL_CONFIGS?: string;
 };
@@ -69,17 +66,6 @@ function getRepo(c: { env: Bindings }): RunRepository {
   return c.env.JUDGE_JEV_RUNS ? new D1RunRepository(c.env.JUDGE_JEV_RUNS) : new MemoryRunRepository();
 }
 
-function getProviderApiKey(env: Bindings, provider: ProviderId): string | undefined {
-  switch (provider) {
-    case "openai":
-      return env.OPENAI_API_KEY;
-    case "anthropic":
-      return env.ANTHROPIC_API_KEY;
-    case "gemini":
-      return env.GEMINI_API_KEY;
-  }
-}
-
 function isProviderId(value: string): value is ProviderId {
   return value === "openai" || value === "anthropic" || value === "gemini";
 }
@@ -105,10 +91,7 @@ function normalizeRunBody(body: RunBody, env: Bindings): { models: string[]; mod
 function buildGraph(c: { env: Bindings }) {
   const credentials = new MemoryCredentialStore();
   return buildJevGraph({
-    modelFactory: async (route) => {
-      const apiKey = getProviderApiKey(c.env, route.provider);
-      return buildModel(configFromRoute(route, apiKey), credentials);
-    },
+    modelFactory: async (route) => buildModel(configFromRoute(route), credentials),
   });
 }
 

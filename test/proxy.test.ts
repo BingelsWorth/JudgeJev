@@ -23,12 +23,7 @@ function createTestApp(env: Record<string, string | undefined> = {}) {
 }
 
 function createMockEnv(overrides: Record<string, string | undefined> = {}) {
-  return {
-    OPENAI_API_KEY: "test-openai-key",
-    ANTHROPIC_API_KEY: "test-anthropic-key",
-    GEMINI_API_KEY: "test-gemini-key",
-    ...overrides,
-  };
+  return { ...overrides };
 }
 
 describe("v1 API endpoints", () => {
@@ -472,7 +467,7 @@ describe("v1 API endpoints", () => {
   describe("Error handling", () => {
     it("returns authentication error for missing API key", async () => {
       mockInvoke.mockRejectedValue(new Error("No API key configured for provider: openai"));
-      const app = createTestApp({ OPENAI_API_KEY: undefined });
+      const app = createTestApp();
       const res = await app.request("/v1/responses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

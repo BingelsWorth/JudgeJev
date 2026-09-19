@@ -49,13 +49,13 @@ JudgeJev is an LLM fan-out proxy: it fans one request out to every configured pr
 - `JEV_MODEL`: which Jev version to use (`jev-latest`, `jev-preview`, or a pinned version). Defaults to `jev-latest`.
 - `JEV_ON_FAILURE`: if the Jev call itself fails (network error, undecodable verdict, etc.), `fallback` (default) silently serves the local heuristic's winner; `error` returns a `judge_error` instead. Use `error` while testing Jev integration so a broken call can't be masked by the fallback.
 
-See [`env.template`](env.template) for the full list of environment variables (provider keys, `MODEL_CONFIGS`, D1 binding, Jev config).
+See [`env.template`](env.template) for the full list of environment variables (`MODEL_CONFIGS`, D1 binding, Jev config).
 
 ## Local development
 
 ```bash
 npm install
-cp env.template .env   # fill in provider keys / local endpoints
+cp env.template .env   # fill in MODEL_CONFIGS / Jev key
 npm test                # vitest
 npm run typecheck       # tsc --noEmit
 npm run dev              # wrangler dev

@@ -34,7 +34,6 @@ function jevVerdict(choice: string) {
 }
 
 const env = {
-  OPENAI_API_KEY: "test-key",
   JEV_API_KEY: "jev-key",
   JEV_API_ENDPOINT: "https://fake-jev.test/judge",
 };
@@ -86,8 +85,8 @@ describe("v1 end-to-end plumbing", () => {
           model: "fast",
           messages: [{ role: "user", content: "Fix this off-by-one bug." }],
           modelConfigs: [
-            { name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } },
-            { name: "worker-b", provider: "openai", model: "model-b", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } },
+            { name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, apiKey: "test-key", fanout: { fast: 1 } },
+            { name: "worker-b", provider: "openai", model: "model-b", endpoint: FAKE_OPENAI_ENDPOINT, apiKey: "test-key", fanout: { fast: 1 } },
           ],
         }),
       },
@@ -147,8 +146,8 @@ describe("v1 end-to-end plumbing", () => {
           model: "fast",
           messages: [{ role: "user", content: "Fix this off-by-one bug." }],
           modelConfigs: [
-            { name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 }, priority: 0 },
-            { name: "worker-b", provider: "openai", model: "model-b", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } },
+            { name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, apiKey: "test-key", fanout: { fast: 1 }, priority: 0 },
+            { name: "worker-b", provider: "openai", model: "model-b", endpoint: FAKE_OPENAI_ENDPOINT, apiKey: "test-key", fanout: { fast: 1 } },
           ],
         }),
       },
@@ -179,7 +178,7 @@ describe("v1 end-to-end plumbing", () => {
         body: JSON.stringify({
           model: "fast",
           messages: [{ role: "user", content: "Fix this off-by-one bug." }],
-          modelConfigs: [{ name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } }],
+          modelConfigs: [{ name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, apiKey: "test-key", fanout: { fast: 1 } }],
         }),
       },
       env,

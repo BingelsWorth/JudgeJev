@@ -34,9 +34,6 @@ import {
 } from "../contracts.js";
 
 interface V1ApiBindings {
-  OPENAI_API_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
-  GEMINI_API_KEY?: string;
   /** Default route registrations (endpoint + token + fan-out dict per entry), same JSON array shape as the request body's `modelConfigs`. Used when a request doesn't supply its own. */
   MODEL_CONFIGS?: string;
   /** API key for Jev (https://docs.typesafe.ai), a fixed public API at a well-known address - not one of our own model routes. Unset = keep using the local bypass heuristic; set = Jev actually judges. */
@@ -76,26 +73,12 @@ interface V1RequestBody {
   modelConfigs?: V1RouteConfig[];
 }
 
-function getProviderApiKey(env: V1ApiBindings, provider: string): string | undefined {
-  switch (provider) {
-    case "openai":
-      return env.OPENAI_API_KEY;
-    case "anthropic":
-      return env.ANTHROPIC_API_KEY;
-    case "gemini":
-      return env.GEMINI_API_KEY;
-    default:
-      return undefined;
-  }
-}
-
 function buildV1Graph(env: V1ApiBindings) {
   return buildJevGraph({
     modelFactory: async (route: ModelRoute) => {
-      const apiKey = getProviderApiKey(env, route.provider);
       const { buildModel, configFromRoute } = await import("../providers/factory.js");
-      return buildModel(configFromRoute(route, apiKey), {
-        get: async (provider: string) => getProviderApiKey(env, provider) ?? "",
+      return buildModel(configFromRoute(route), {
+        get: async () => "",
       } as any);
     },
   });
