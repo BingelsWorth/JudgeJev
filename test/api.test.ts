@@ -306,10 +306,16 @@ describe("v1 API endpoints", () => {
       });
     }
 
-    function chatCompletion(content: string) {
-      return {
-        choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
-      };
+    function chatCompletionStream(content: string): Response {
+      const encoder = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
     }
 
     afterEach(() => {
@@ -322,12 +328,7 @@ describe("v1 API endpoints", () => {
       mockInvoke.mockResolvedValue({ winner: workers[1], workers });
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () =>
-          new Response(JSON.stringify(chatCompletion(JSON.stringify({ winnerCandidateId: "worker-0" }))), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-        ),
+        vi.fn(async () => chatCompletionStream(JSON.stringify({ winnerCandidateId: "worker-0" }))),
       );
 
       const app = createTestApp(jevEnv());

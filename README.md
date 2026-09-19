@@ -43,6 +43,7 @@ There is no standalone Jev service yet. "The actual Jev endpoint" is, for now, a
 - `JEV_API_ENDPOINT` unset (default): skip Jev entirely and serve the longest-candidate local heuristic. This is the dev-time bypass - useful before you have a judge model to point at.
 - `JEV_API_ENDPOINT` set: after the fan-out barrier, prompt `JEV_MODEL` at that endpoint as the judge and return its chosen candidate unchanged.
 - `JEV_ON_FAILURE`: if the Jev call itself fails (network error, undecodable verdict, etc.), `fallback` (default) silently serves the local heuristic's winner; `error` returns a `judge_error` instead. Use `error` while testing Jev integration so a broken call can't be masked by the fallback.
+- Reasoning models are supported, not disabled: the judge call streams internally (an implementation detail - JudgeJev's own API is still non-streaming) and stops as soon as a complete verdict appears after `</think>`, so a model's full thinking budget stays available without paying for unrelated tokens after the answer.
 
 See [`env.template`](env.template) for the full list of environment variables (provider keys/base URLs, D1 binding, Jev config).
 

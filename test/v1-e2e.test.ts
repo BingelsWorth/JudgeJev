@@ -25,8 +25,18 @@ function openAIChatCompletion(model: string, content: string) {
   };
 }
 
-function jevVerdict(winnerCandidateId: string, notes: string[] = []) {
-  return openAIChatCompletion("judge-model", JSON.stringify({ winnerCandidateId, notes }));
+/** callJevJudge requests `stream: true` - the Jev endpoint mock must actually speak SSE. */
+function jevVerdictStream(winnerCandidateId: string, notes: string[] = []): Response {
+  const encoder = new TextEncoder();
+  const content = JSON.stringify({ winnerCandidateId, notes });
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
 }
 
 const env = {
@@ -60,10 +70,11 @@ describe("v1 end-to-end plumbing", () => {
       }
 
       if (url.startsWith("https://fake-jev.test/")) {
-        // Jev is prompted with both candidates; pick worker-1 (candidate B) deliberately,
-        // which the longest-content bypass heuristic would also pick here - the point of
-        // this test is that Jev's own decision is what's actually driving the response.
-        return jsonResponse(jevVerdict("worker-1", ["candidate B was clearer and more complete"]));
+        // The local longest-content bypass heuristic would pick worker-1 (candidate B,
+        // longer). Have Jev deliberately pick worker-0 (the shorter one) instead, so this
+        // test actually proves Jev's own decision - not the bypass - drives the response,
+        // rather than the two coincidentally agreeing.
+        return jevVerdictStream("worker-0", ["candidate A was more direct and equally correct"]);
       }
 
       throw new Error(`unexpected fetch to ${url}`);
@@ -91,7 +102,7 @@ describe("v1 end-to-end plumbing", () => {
     expect(res.status).toBe(200);
     const json: any = await res.json();
     expect(json.object).toBe("chat.completion");
-    expect(json.choices[0].message.content).toBe("candidate B: a thorough, well-explained fix");
+    expect(json.choices[0].message.content).toBe("candidate A: a short fix");
     expect(json.stream).toBeUndefined();
 
     // Both provider attempts must complete before the Jev judging call fires.
@@ -102,6 +113,10 @@ describe("v1 end-to-end plumbing", () => {
 
     expect(providerCallIndexes).toHaveLength(2);
     expect(jevCallIndex).toBeGreaterThan(Math.max(...providerCallIndexes));
+
+    // Prove the Jev call itself is really the streamed judge contract, not a plain request.
+    const jevInit = fetchImpl.mock.calls[jevCallIndex][1] as RequestInit;
+    expect(JSON.parse(String(jevInit.body)).stream).toBe(true);
   });
 
   it("still calls Jev with the surviving candidate when one provider attempt fails", async () => {
@@ -117,7 +132,7 @@ describe("v1 end-to-end plumbing", () => {
         return jsonResponse(openAIChatCompletion(body.model, "candidate B: the only survivor"));
       }
       if (url.startsWith("https://fake-jev.test/")) {
-        return jsonResponse(jevVerdict("worker-1"));
+        return jevVerdictStream("worker-1");
       }
       throw new Error(`unexpected fetch to ${url}`);
     });
