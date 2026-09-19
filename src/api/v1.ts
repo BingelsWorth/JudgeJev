@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { buildJevGraph } from "../graph/jev-graph.js";
-import type { ModelRoute } from "../providers/router.js";
-import type { JevModel } from "../providers/types.js";
+import type { WorkerAttempt } from "../graph/state.js";
+import { normalizeModelConfigs, type ModelRoute, type ModelRouteInput } from "../providers/router.js";
+import { callJevJudge } from "../jev/client.js";
 import {
   V1_ENDPOINT_MATRIX,
   GENERIC_CODING_RUBRIC,
@@ -28,6 +29,8 @@ import {
   type V1MessagesResponse,
   type V1Usage,
   type V1FinishReasonForProtocol,
+  type V1AttemptForEndpoint,
+  type V1ModelMetadata,
 } from "../v1/contracts.js";
 
 interface V1ApiBindings {
@@ -37,17 +40,35 @@ interface V1ApiBindings {
   OPENAI_BASE_URL?: string;
   ANTHROPIC_BASE_URL?: string;
   GEMINI_BASE_URL?: string;
+  /** Base URL of the (for now, OpenAI-compatible) server prompted to act as the Jev judge. Unset = keep using the local bypass heuristic. */
   JEV_API_ENDPOINT?: string;
   JEV_API_KEY?: string;
+  /** Model name to prompt as the judge at JEV_API_ENDPOINT. Required whenever JEV_API_ENDPOINT is set. */
+  JEV_MODEL?: string;
+  /** "fallback" (default) silently falls back to the local heuristic if the Jev call fails; "error" surfaces a judge_error instead, useful while testing that Jev is actually being exercised. */
+  JEV_ON_FAILURE?: string;
 }
 
-interface V1RouteConfig {
-  logicalModel: string;
-  provider: string;
-  upstreamModel?: string;
-  priority?: number;
-  enabled?: boolean;
-}
+type V1RouteConfig = ModelRouteInput;
+
+const providerSchema = z.enum(["openai", "anthropic", "gemini"]);
+
+const modelConfigSchema = z.object({
+  name: z.string().optional(),
+  logicalModel: z.string().optional(),
+  provider: providerSchema,
+  upstreamModel: z.string().optional(),
+  model: z.string().optional(),
+  endpoint: z.string().optional(),
+  apiKey: z.string().optional(),
+  aliases: z.array(z.string()).optional(),
+  priority: z.number().optional(),
+  enabled: z.boolean().optional(),
+  fanout: z.record(z.unknown()).optional(),
+}).refine(
+  (config) => Boolean(config.logicalModel?.trim() || config.name?.trim()),
+  { message: "modelConfigs require logicalModel or name" },
+);
 
 interface V1RequestBody {
   model?: string;
@@ -72,9 +93,8 @@ function buildV1Graph(env: V1ApiBindings) {
   return buildJevGraph({
     modelFactory: async (route: ModelRoute) => {
       const { apiKey, baseUrl } = getProviderConfig(env, route.provider);
-
       const { buildModel, configFromRoute } = await import("../providers/factory.js");
-      return buildModel({ ...configFromRoute(route, apiKey), baseUrl }, {
+      return buildModel(configFromRoute(route, apiKey, baseUrl), {
         get: async (provider: string) => getProviderConfig(env, provider).apiKey ?? "",
       } as any);
     },
@@ -213,17 +233,6 @@ function validateRequestBody(body: unknown, endpoint: V1Endpoint): V1DownstreamR
 
   return validated;
 }
-
-function normalizeModelConfigs(configs: V1RouteConfig[] | undefined): ModelRoute[] {
-  return (configs ?? []).map((config) => ({
-    logicalModel: config.logicalModel.trim(),
-    provider: config.provider as "openai" | "anthropic" | "gemini",
-    upstreamModel: (config.upstreamModel ?? config.logicalModel).trim(),
-    priority: config.priority ?? 0,
-    enabled: config.enabled ?? true,
-  }));
-}
-
 function buildWinnerResponse<E extends V1Endpoint>(
   winner: any,
   endpoint: E,
@@ -306,6 +315,126 @@ function buildWinnerResponse<E extends V1Endpoint>(
   }
 }
 
+function buildJevAttempts<E extends V1Endpoint>(
+  workers: WorkerAttempt[],
+  endpoint: E,
+  protocol: V1ProtocolForEndpoint<E>,
+  request: V1DownstreamRequest,
+): V1AttemptForEndpoint<E>[] {
+  return workers
+    .filter((worker) => worker.status === "succeeded" || worker.status === "failed")
+    .map((worker): V1AttemptForEndpoint<E> => {
+      const model: V1ModelMetadata = {
+        logicalModel: worker.model,
+        upstreamModel: worker.upstreamModel ?? worker.model,
+        provider: worker.provider,
+        routeId: worker.id,
+      };
+
+      if (worker.status === "succeeded" && worker.content.trim().length > 0) {
+        return {
+          requestId: request.requestId,
+          id: worker.id,
+          endpoint,
+          protocol,
+          status: "succeeded",
+          model,
+          response: buildWinnerResponse(worker, endpoint, request),
+          content: worker.content,
+          usage: worker.usage
+            ? {
+                inputTokens: worker.usage.inputTokens,
+                outputTokens: worker.usage.outputTokens,
+                totalTokens: worker.usage.inputTokens + worker.usage.outputTokens,
+              }
+            : undefined,
+          finishReason: protocol === "anthropic_messages" ? "end_turn" : "stop",
+        } as V1AttemptForEndpoint<E>;
+      }
+
+      return {
+        requestId: request.requestId,
+        id: worker.id,
+        endpoint,
+        protocol,
+        status: "failed",
+        model,
+        error: {
+          attemptId: worker.id,
+          code: "upstream_error",
+          message: worker.error ?? "worker produced no usable content",
+          retryable: false,
+          provider: worker.provider,
+          upstreamModel: worker.upstreamModel ?? worker.model,
+        },
+      } as V1AttemptForEndpoint<E>;
+    });
+}
+
+type JevJudgeOutcome =
+  | { called: false }
+  | { called: true; ok: true; response: V1DownstreamResponse }
+  | { called: true; ok: false; error: V1Error };
+
+async function runJevJudge<E extends V1Endpoint>(
+  env: V1ApiBindings,
+  workers: WorkerAttempt[],
+  endpoint: E,
+  request: V1DownstreamRequest,
+): Promise<JevJudgeOutcome> {
+  if (!env.JEV_API_ENDPOINT) return { called: false };
+
+  const protocol = V1_ENDPOINT_MATRIX[endpoint].protocol as V1ProtocolForEndpoint<E>;
+  const attempts = buildJevAttempts(workers, endpoint, protocol, request);
+  const candidates = attempts.filter(
+    (attempt): attempt is Extract<V1AttemptForEndpoint<E>, { status: "succeeded" }> => attempt.status === "succeeded",
+  );
+
+  if (candidates.length === 0) return { called: false };
+
+  if (!env.JEV_MODEL) {
+    return {
+      called: true,
+      ok: false,
+      error: { code: "judge_error", message: "JEV_API_ENDPOINT is configured but JEV_MODEL is not set", status: 500 },
+    };
+  }
+
+  const jevRequest: V1JevRequest<E> = {
+    requestId: request.requestId,
+    endpoint,
+    request: request as V1JevRequest<E>["request"],
+    attempts,
+    candidates,
+    rubric: GENERIC_CODING_RUBRIC,
+  };
+
+  const outcome = await callJevJudge(jevRequest, {
+    endpoint: env.JEV_API_ENDPOINT,
+    model: env.JEV_MODEL,
+    apiKey: env.JEV_API_KEY,
+    // Keep this well inside a Worker's request budget: one retry, short backoff.
+    retry: { maxAttempts: 2, baseDelayMs: 250, maxDelayMs: 1000 },
+  });
+
+  if (!outcome.ok) return { called: true, ok: false, error: outcome.error };
+
+  const winningCandidate = candidates.find((candidate) => candidate.id === outcome.response.winnerCandidateId);
+  if (!winningCandidate) {
+    return {
+      called: true,
+      ok: false,
+      error: {
+        code: "judge_error",
+        message: "Jev selected a candidate id that could not be matched back to a response",
+        status: 502,
+      },
+    };
+  }
+
+  return { called: true, ok: true, response: winningCandidate.response };
+}
+
 function createErrorResponse(error: V1Error): V1ErrorResponse {
   return { error };
 }
@@ -350,10 +479,13 @@ async function handleV1Request(
   body: V1RequestBody
 ): Promise<Response> {
   try {
-    const validatedRequest = validateRequestBody(await c.req.json(), endpoint);
-    const modelConfigs = normalizeModelConfigs(body.modelConfigs);
+    const env: V1ApiBindings = c.env ?? {};
+    const rawBody = await c.req.json();
+    const validatedRequest = validateRequestBody(rawBody, endpoint);
+    const parsedConfigs = modelConfigSchema.array().optional().parse(rawBody.modelConfigs);
+    const modelConfigs = normalizeModelConfigs(parsedConfigs);
 
-    const graph = buildV1Graph(c.env);
+    const graph = buildV1Graph(env);
     const routes = modelConfigs.length
       ? modelConfigs
       : (await import("../providers/router.js")).defaultModelRoutes([validatedRequest.model]);
@@ -370,6 +502,20 @@ async function handleV1Request(
     }, { configurable: { thread_id: validatedRequest.requestId } });
 
     const winner = result.winner;
+
+    const jevOutcome = await runJevJudge(env, result.workers ?? [], endpoint, validatedRequest);
+    if (jevOutcome.called) {
+      if (jevOutcome.ok) {
+        return c.json(jevOutcome.response);
+      }
+
+      const onFailure = env.JEV_ON_FAILURE === "error" ? "error" : "fallback";
+      if (onFailure === "error") {
+        return c.json(createErrorResponse(jevOutcome.error), jevOutcome.error.status);
+      }
+      // fallback mode: fall through and serve the local-heuristic winner below.
+    }
+
     if (!winner) {
       const v1Error: V1Error = {
         code: "no_viable_candidates",

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import type { V1Error } from "../src/v1/contracts.js";
 
@@ -61,17 +61,65 @@ describe("v1 API endpoints", () => {
       expect(json.error.code).toBe("invalid_request");
     });
 
-    it("returns 502 when no viable candidates", async () => {
+    it("normalizes registered fan-out configuration", async () => {
       mockInvoke.mockResolvedValue({ winner: null });
       const app = createTestApp(createMockEnv());
       const res = await app.request("/v1/responses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4o", input: "test" }),
+        body: JSON.stringify({
+          model: "fast",
+          input: "test",
+          modelConfigs: [{
+            name: "local-qwen",
+            provider: "openai",
+            model: "qwen3.5-9b",
+            endpoint: "http://localhost:8000/v1",
+            apiKey: "local-key",
+            aliases: [" Alias "],
+            fanout: { fast: 2 },
+          }],
+        }),
       });
+
       expect(res.status).toBe(502);
-      const json: any = await res.json();
-      expect(json.error.code).toBe("no_viable_candidates");
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.models).toEqual(["fast"]);
+      expect(state.modelConfigs).toEqual([{
+        name: "local-qwen",
+        logicalModel: "local-qwen",
+        provider: "openai",
+        upstreamModel: "qwen3.5-9b",
+        model: "qwen3.5-9b",
+        endpoint: "http://localhost:8000/v1",
+        apiKey: "local-key",
+        aliases: ["Alias"],
+        priority: 0,
+        enabled: true,
+        fanout: { fast: 2 },
+      }]);
+    });
+
+    it("uses the default route when modelConfigs is explicitly empty", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const app = createTestApp(createMockEnv());
+      const res = await app.request("/v1/responses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "fast", input: "test", modelConfigs: [] }),
+      });
+
+      expect(res.status).toBe(502);
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.models).toEqual(["fast"]);
+      expect(state.modelConfigs).toEqual([{
+        logicalModel: "fast",
+        provider: "openai",
+        upstreamModel: "fast",
+        priority: 0,
+        enabled: true,
+      }]);
     });
 
     it("returns winner response on success", async () => {
@@ -225,6 +273,140 @@ describe("v1 API endpoints", () => {
       expect(json.content[0].text).toBe("Test response");
       expect(json.usage.inputTokens).toBe(10);
       expect(json.usage.outputTokens).toBe(20);
+    });
+  });
+
+  describe("Jev judging integration", () => {
+    const workers = [
+      {
+        id: "worker-0",
+        model: "gpt-4o",
+        upstreamModel: "gpt-4o",
+        provider: "openai",
+        status: "succeeded",
+        content: "short answer",
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+      {
+        id: "worker-1",
+        model: "gpt-4o-mini",
+        upstreamModel: "gpt-4o-mini",
+        provider: "openai",
+        status: "succeeded",
+        content: "a much longer, more thorough answer",
+        usage: { inputTokens: 10, outputTokens: 20 },
+      },
+    ];
+
+    function jevEnv(overrides: Record<string, string | undefined> = {}) {
+      return createMockEnv({
+        JEV_API_ENDPOINT: "http://192.168.2.106:8000/v1",
+        JEV_MODEL: "Qwen/Qwen3-1.7B",
+        ...overrides,
+      });
+    }
+
+    function chatCompletion(content: string) {
+      return {
+        choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+      };
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("returns the candidate Jev selects, even when it differs from the local heuristic", async () => {
+      // The local longest-content heuristic would pick worker-1; have Jev pick worker-0 instead
+      // to prove the real judge's decision - not the bypass - drives the response.
+      mockInvoke.mockResolvedValue({ winner: workers[1], workers });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          new Response(JSON.stringify(chatCompletion(JSON.stringify({ winnerCandidateId: "worker-0" }))), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+
+      const app = createTestApp(jevEnv());
+      const res = await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "test" }] }),
+        },
+        jevEnv(),
+      );
+
+      expect(res.status).toBe(200);
+      const json: any = await res.json();
+      expect(json.choices[0].message.content).toBe("short answer");
+    });
+
+    it("falls back to the local heuristic winner when the Jev call fails and JEV_ON_FAILURE is unset", async () => {
+      mockInvoke.mockResolvedValue({ winner: workers[1], workers });
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+
+      const app = createTestApp(jevEnv());
+      const res = await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "test" }] }),
+        },
+        jevEnv(),
+      );
+
+      expect(res.status).toBe(200);
+      const json: any = await res.json();
+      expect(json.choices[0].message.content).toBe("a much longer, more thorough answer");
+    });
+
+    it("returns a judge_error when the Jev call fails and JEV_ON_FAILURE=error", async () => {
+      mockInvoke.mockResolvedValue({ winner: workers[1], workers });
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+
+      const env = jevEnv({ JEV_ON_FAILURE: "error" });
+      const app = createTestApp(env);
+      const res = await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "test" }] }),
+        },
+        env,
+      );
+
+      expect(res.status).toBe(502);
+      const json: any = await res.json();
+      expect(json.error.code).toBe("judge_error");
+    });
+
+    it("does not call Jev when JEV_API_ENDPOINT is not configured", async () => {
+      mockInvoke.mockResolvedValue({ winner: workers[1], workers });
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const app = createTestApp(createMockEnv());
+      const res = await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "test" }] }),
+        },
+        createMockEnv(),
+      );
+
+      expect(res.status).toBe(200);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const json: any = await res.json();
+      expect(json.choices[0].message.content).toBe("a much longer, more thorough answer");
     });
   });
 

@@ -16,9 +16,8 @@ import { buildJevGraph } from "./graph/jev-graph.js";
 import { D1RunRepository, MemoryRunRepository, type RunRepository } from "./runs/repository.js";
 import { buildModel, configFromRoute } from "./providers/factory.js";
 import { MemoryCredentialStore } from "./auth/credentials.js";
-import { defaultModelRoutes } from "./providers/router.js";
+import { defaultModelRoutes, modelNamesForRoutes, normalizeModelRoute, type ModelRoute, type ModelRouteInput } from "./providers/router.js";
 import type { JevRunState } from "./graph/state.js";
-import type { ModelRoute } from "./providers/router.js";
 import type { ProviderId } from "./providers/types.js";
 import { createV1Router } from "./api/v1.js";
 
@@ -32,15 +31,6 @@ type Bindings = {
   ANTHROPIC_BASE_URL?: string;
   GEMINI_BASE_URL?: string;
 };
-
-interface ModelRouteInput {
-  logicalModel: string;
-  provider: ProviderId;
-  upstreamModel?: string;
-  model?: string;
-  priority?: number;
-  enabled?: boolean;
-}
 
 interface RunBody {
   request?: string;
@@ -80,14 +70,14 @@ function getRepo(c: { env: Bindings }): RunRepository {
   return c.env.JUDGE_JEV_RUNS ? new D1RunRepository(c.env.JUDGE_JEV_RUNS) : new MemoryRunRepository();
 }
 
-function getProviderApiKey(env: Bindings, provider: ProviderId): string | undefined {
+function getProviderConfig(env: Bindings, provider: ProviderId): { apiKey: string | undefined; baseUrl: string | undefined } {
   switch (provider) {
     case "openai":
-      return env.OPENAI_API_KEY;
+      return { apiKey: env.OPENAI_API_KEY, baseUrl: env.OPENAI_BASE_URL };
     case "anthropic":
-      return env.ANTHROPIC_API_KEY;
+      return { apiKey: env.ANTHROPIC_API_KEY, baseUrl: env.ANTHROPIC_BASE_URL };
     case "gemini":
-      return env.GEMINI_API_KEY;
+      return { apiKey: env.GEMINI_API_KEY, baseUrl: env.GEMINI_BASE_URL };
   }
 }
 
@@ -96,13 +86,7 @@ function isProviderId(value: string): value is ProviderId {
 }
 
 function normalizeModelConfigs(configs: ModelRouteInput[] | undefined): ModelRoute[] {
-  return (configs ?? []).map((config) => ({
-    logicalModel: config.logicalModel.trim(),
-    provider: config.provider,
-    upstreamModel: (config.upstreamModel ?? config.model ?? config.logicalModel).trim(),
-    priority: config.priority ?? 0,
-    enabled: config.enabled ?? true,
-  }));
+  return (configs ?? []).map(normalizeModelRoute);
 }
 
 function normalizeRunBody(body: RunBody): { models: string[]; modelConfigs: ModelRoute[] } {
@@ -112,7 +96,7 @@ function normalizeRunBody(body: RunBody): { models: string[]; modelConfigs: Mode
     .filter(Boolean);
 
   if (modelConfigs.length > 0) {
-    return { models: models.length ? models : modelConfigs.map((route) => route.logicalModel), modelConfigs };
+    return { models: models.length ? models : modelNamesForRoutes(modelConfigs), modelConfigs };
   }
 
   return { models: models.length ? models : ["gpt-4o"], modelConfigs: defaultModelRoutes(models.length ? models : ["gpt-4o"]) };
@@ -121,8 +105,10 @@ function normalizeRunBody(body: RunBody): { models: string[]; modelConfigs: Mode
 function buildGraph(c: { env: Bindings }) {
   const credentials = new MemoryCredentialStore();
   return buildJevGraph({
-    modelFactory: async (route) =>
-      buildModel(configFromRoute(route, getProviderApiKey(c.env, route.provider)), credentials),
+    modelFactory: async (route) => {
+      const { apiKey, baseUrl } = getProviderConfig(c.env, route.provider);
+      return buildModel(configFromRoute(route, apiKey, baseUrl), credentials);
+    },
   });
 }
 
@@ -131,8 +117,9 @@ app.post("/runs", async (c) => {
   if (!body?.request?.trim()) {
     return c.json({ error: "request is required" }, 400);
   }
-  if (body.modelConfigs?.some((config) => !config.logicalModel?.trim() || !isProviderId(config.provider))) {
-    return c.json({ error: "modelConfigs require logicalModel and a supported provider" }, 400);
+  if (body.modelConfigs !== undefined && (!Array.isArray(body.modelConfigs) || body.modelConfigs.some((config) =>
+    !(config.logicalModel?.trim() || config.name?.trim()) || !isProviderId(config.provider)))) {
+    return c.json({ error: "modelConfigs require logicalModel or name and a supported provider" }, 400);
   }
 
   const { models, modelConfigs } = normalizeRunBody(body);

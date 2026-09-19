@@ -121,46 +121,54 @@ The current implementation already has concurrent non-streaming fan-out, basic d
 
 #### Chunk D — Fan-out barrier and graph orchestration
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** Chunks 0, B, and C
-- [ ] **Files:** `src/graph/state.ts`, `src/graph/jev-graph.ts`, `src/graph/fanout.ts` (new, if useful), `test/judge.test.ts`
-- [ ] Run every configured provider/model attempt concurrently and wait for all attempts to complete or fail before judging.
-- [ ] Preserve per-attempt failures, normalize successful responses, and prune exact duplicates without emitting partial output.
-- [ ] Remove or bypass live `inspect`/`intervene` behavior for v1; do not add checkpoints, restart, redirect, or branching.
-- [ ] Call the shared judge port after the fan-out barrier and keep the graph compatible with the actual Jev client from Chunk E.
-- [ ] **Exit criteria:** graph tests prove the all-attempts barrier, candidate pruning, failure handling, and absence of partial-output fallback.
+- [x] **Owner:** Claude (2026-09-19)
+- [x] **Dependencies:** Chunks 0, B, and C
+- [x] **Files:** `src/graph/state.ts`, `src/graph/jev-graph.ts`, `src/graph/fanout.ts` (new, if useful), `test/judge.test.ts`, `src/providers/router.ts` (fan-out registration/dictionary support added here instead of a separate file)
+- [x] Run every configured provider/model attempt concurrently and wait for all attempts to complete or fail before judging.
+- [x] Preserve per-attempt failures, normalize successful responses, and prune exact duplicates without emitting partial output.
+- [x] Remove or bypass live `inspect`/`intervene` behavior for v1; do not add checkpoints, restart, redirect, or branching.
+- [x] Call the shared judge port after the fan-out barrier and keep the graph compatible with the actual Jev client from Chunk E.
+- [x] **Exit criteria:** graph tests prove the all-attempts barrier, candidate pruning, failure handling, and absence of partial-output fallback.
+
+**Chunk D results:** `ModelRoute` gained `endpoint`/`apiKey` (per-registration config block) and `fanout: Record<logicalModel, count>` (the model-name -> attempt-count dictionary). `resolveModelRoutes`/`resolveRoutesForState` in `src/providers/router.ts` enumerate every registered route and expand each one by its fan-out count for the requested model. `jev-graph.ts`'s `fanOut` runs every expanded route concurrently via `Promise.all` (the all-attempts barrier), `inspect`/`intervene` remain only as synchronous post-barrier duplicate-pruning steps (no live checkpoints/restart/redirect/branching - that scope was never added), and `judge()` is the swappable port: it runs a local longest-content heuristic by default, which `src/api/v1.ts` overrides with the real Jev call from Chunk E when `JEV_API_ENDPOINT` is configured. Tests: `test/routing-errors.test.ts`, `test/judge.test.ts`, `test/v1-e2e.test.ts`.
 
 #### Chunk E — Actual Jev judging endpoint
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** Chunk 0 and the judge port defined by Chunk D
-- [ ] **Files:** `src/judge/judge.ts`, `src/jev/client.ts` (new), `test/jev-client.test.ts` (new)
-- [ ] Replace the current longest-content heuristic with a type-safe client for the configured actual Jev endpoint.
-- [ ] Send the original request, candidates, and initial generic coding-quality rubric/questions after the fan-out barrier.
-- [ ] Decode the selected candidate ID and metadata without exposing hidden chain-of-thought.
-- [ ] Keep prefill-derived question/context selection and the final question matrix/rubric deferred until after v1.
-- [ ] **Exit criteria:** fake-fetch tests cover the request payload, winner response, endpoint errors, and unchanged-winner mapping contract.
+- [x] **Owner:** Claude (2026-09-19)
+- [x] **Dependencies:** Chunk 0 and the judge port defined by Chunk D
+- [x] **Files:** `src/api/v1.ts`, `src/jev/client.ts` (new), `test/jev-client.test.ts` (new); `src/judge/judge.ts` unchanged (kept as the default/bypass judge port)
+- [x] Replace the current longest-content heuristic with a type-safe client for the configured actual Jev endpoint.
+- [x] Send the original request, candidates, and initial generic coding-quality rubric/questions after the fan-out barrier.
+- [x] Decode the selected candidate ID and metadata without exposing hidden chain-of-thought.
+- [x] Keep prefill-derived question/context selection and the final question matrix/rubric deferred until after v1.
+- [x] **Exit criteria:** fake-fetch tests cover the request payload, winner response, endpoint errors, and unchanged-winner mapping contract.
+
+**Chunk E decision:** there is no standalone Jev microservice yet, so "the actual Jev endpoint" is implemented as an LLM-as-judge: `callJevJudge` in `src/jev/client.ts` builds a chat-completions prompt from the type-safe `V1JevRequest` (rubric + candidates), POSTs it to an OpenAI-compatible server (`JEV_API_ENDPOINT`, model `JEV_MODEL`), and decodes the model's JSON verdict back into `V1JevResponse` - reusing `fetchOk`/`retryWithBackoff` from `src/providers/errors.ts` with a short retry budget (`maxAttempts: 2`, capped backoff) to stay inside a Worker's request budget. `judge_error` failures always report status 502 regardless of the upstream status, since JudgeJev is the gateway. `src/api/v1.ts` wires this in via `runJevJudge`: unset `JEV_API_ENDPOINT` keeps the exact prior bypass behavior (dev default, unchanged); when set, it builds full protocol-shaped `V1AttemptForEndpoint`/`V1CandidateForEndpoint` records from the graph's `WorkerAttempt[]`, calls Jev, and on failure either falls back to the local heuristic (`JEV_ON_FAILURE=fallback`, default) or surfaces a `judge_error` (`JEV_ON_FAILURE=error`) per user decision. Local dev is configured against a real (unauthenticated) vLLM box - see `.env`/`env.template`. `npm test` = 152/152, `npm run typecheck` passing.
 
 ### Wave 3 — Parallel validation chunks
 
 #### Chunk F — End-to-end v1 plumbing tests
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** Chunks A through E
-- [ ] **Files:** `test/v1-e2e.test.ts` (new), `test/fixtures/` (new, if needed)
-- [ ] Run a generic coding-question request through the proxy, mocked providers, fan-out barrier, mocked Jev endpoint, and original caller response.
-- [ ] Verify all attempts complete before judging, the winner is returned unchanged, failures are sanitized, and no streaming events are emitted.
-- [ ] **Exit criteria:** one end-to-end test exercises the complete v1 path with no live credentials required.
+- [x] **Owner:** Claude (2026-09-19)
+- [x] **Dependencies:** Chunks A through E
+- [x] **Files:** `test/v1-e2e.test.ts` (new)
+- [x] Run a generic coding-question request through the proxy, mocked providers, fan-out barrier, mocked Jev endpoint, and original caller response.
+- [x] Verify all attempts complete before judging, the winner is returned unchanged, failures are sanitized, and no streaming events are emitted.
+- [x] **Exit criteria:** one end-to-end test exercises the complete v1 path with no live credentials required.
+
+**Chunk F results:** `test/v1-e2e.test.ts` runs real requests through `createV1Router()` with the real graph and provider/Jev clients (no mocked graph, unlike `test/api.test.ts`), against a single stubbed `global.fetch` that dispatches by URL to a fake provider box vs. a fake Jev box. Covers: two fan-out routes both called and completed before the Jev call fires (asserted via call order), Jev's own winner choice being what's returned (not the local heuristic's pick), one failed + one succeeded attempt still reaching Jev with just the survivor, and an all-failed pool short-circuiting to `no_viable_candidates` without ever calling Jev.
 
 #### Chunk G — Documentation, configuration, and local validation
 
-- [ ] **Owner:** unassigned
-- [ ] **Dependencies:** Chunks A through E
-- [ ] **Files:** `README.md`, `env.template`, `wrangler.jsonc`, `Justfile` (only if a recipe is missing)
-- [ ] Document the v1 endpoints, authentication, provider configuration, Jev endpoint configuration, and local development commands.
-- [ ] Add only the environment variables and Wrangler bindings required by the completed v1 contract.
-- [ ] Run local proxy smoke tests with mocked or configured providers and Jev.
-- [ ] **Exit criteria:** documentation and configuration match the implemented contract; `just dev`, `just test`, `just typecheck`, and `just build` are usable.
+- [x] **Owner:** Claude (2026-09-19)
+- [x] **Dependencies:** Chunks A through E
+- [x] **Files:** `README.md`, `env.template`, `test-integration.mjs`; `wrangler.jsonc`/`Justfile` needed no changes (no vars declared there for any provider key today, and all required recipes already existed)
+- [x] Document the v1 endpoints, authentication, provider configuration, Jev endpoint configuration, and local development commands.
+- [x] Add only the environment variables and Wrangler bindings required by the completed v1 contract.
+- [x] Run local proxy smoke tests with mocked or configured providers and Jev.
+- [x] **Exit criteria:** documentation and configuration match the implemented contract; `just dev`, `just test`, `just typecheck`, and `just build` are usable.
+
+**Chunk G results:** README now documents the `/v1/*` and `/runs` endpoints, the `modelConfigs`/`fanout` registration format, and the Jev bypass/fallback/strict behavior. `env.template` documents `JEV_API_ENDPOINT`/`JEV_API_KEY`/`JEV_MODEL`/`JEV_ON_FAILURE`. `test-integration.mjs` gained a `testJevJudging()` step exercising `callJevJudge` against a real local box - this could not be run from the agent sandbox (no route to the LAN box); it should be run manually (`npx tsx test-integration.mjs`) to confirm live connectivity.
 
 ### Parallelization map
 
@@ -197,8 +205,8 @@ Use these upstream areas as the reference for v1's non-streaming pieces. Streami
 
 ## Current validation
 
-- `npm test`: 84/84 passing (71 provider tests, 8 v1 contract tests, 5 judge tests).
-- `npm run typecheck`: passing on the last run.
-- `npm run build`: passing on the last run.
-- `git diff --check`: passing on the last run.
+- `npm test`: 152/152 passing across `test/v1-contracts.test.ts`, `test/jev-client.test.ts`, `test/routing-errors.test.ts`, `test/providers.test.ts`, `test/v1-e2e.test.ts`, `test/judge.test.ts`, `test/api.test.ts`.
+- `npm run typecheck`: passing on the last run (2026-09-19).
+- All of Wave 0 through Wave 3 (Chunks 0, A-G) are now checked off; v1 as scoped in this file is implemented.
+- `npx tsx test-integration.mjs` run against the real local vLLM box (2026-09-19): single request, 5x fan-out, and live Jev judging all pass. This surfaced and fixed two real bugs the mocked tests couldn't catch: (1) the vLLM box is a reasoning model (Qwen3) that burns its token budget on a `<think>` block before answering - `callJevJudge` now sends `chat_template_kwargs: {enable_thinking:false}`, strips any leftover `<think>` block defensively, and uses a larger `max_tokens`; (2) `test-integration.mjs` itself had a pre-existing bug where the fan-out test's routes never matched `state.models` (silently resolved to 0 workers every run) and the single-request test never sent a `model` field at all (silently omitted by `JSON.stringify`, only "working" because the box falls back to its one loaded model) - both fixed to use the real served model name (`Qwen/Qwen3-1.7B`, override via `VLLM_MODEL`).
 - No commit has been made.

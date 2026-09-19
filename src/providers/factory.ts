@@ -1,5 +1,5 @@
 import type { JevModel, ProviderId } from "./types.js";
-import type { ModelRoute } from "./router.js";
+import { routeLogicalModel, routeUpstreamModel, type ModelRoute } from "./router.js";
 import { createOpenAIModel, type OpenAIModelOptions } from "./openai.js";
 import { createAnthropicModel, type AnthropicModelOptions } from "./anthropic.js";
 import { createGeminiModel, type GeminiModelOptions } from "./gemini.js";
@@ -13,12 +13,13 @@ export interface ProviderConfig {
   baseUrl?: string;
 }
 
-export function configFromRoute(route: ModelRoute, apiKey?: string): ProviderConfig {
+export function configFromRoute(route: ModelRoute, apiKey?: string, baseUrl?: string): ProviderConfig {
   return {
     provider: route.provider,
-    model: route.upstreamModel,
-    logicalModel: route.logicalModel,
-    apiKey,
+    model: routeUpstreamModel(route),
+    logicalModel: routeLogicalModel(route) || undefined,
+    apiKey: route.apiKey ?? apiKey,
+    baseUrl: route.endpoint?.trim() || baseUrl,
   };
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { UpstreamError, classifyRetryableFailure, isRetryableError, retryWithBackoff } from "../src/providers/errors.js";
-import { defaultModelRoutes, normalizeModelName, resolveModelRoutes, resolveRoutesForState } from "../src/providers/router.js";
+import { defaultModelRoutes, modelNamesForRoutes, normalizeModelName, normalizeModelRoute, resolveModelRoutes, resolveRoutesForState } from "../src/providers/router.js";
 import type { ModelRoute } from "../src/providers/router.js";
 
 describe("route resolution", () => {
@@ -56,6 +56,149 @@ describe("route resolution", () => {
   it("resolves multiple logical models from state", () => {
     const routes = resolveRoutesForState(["gpt-4o", "claude"], []);
     expect(routes.map((r) => r.logicalModel)).toEqual(["gpt-4o", "claude"]);
+  });
+
+  it("expands each registration by its fan-out count", () => {
+    const routes: ModelRoute[] = [
+      {
+        name: "local-qwen",
+        provider: "openai",
+        model: "qwen3.5-9b",
+        endpoint: "http://localhost:8000/v1",
+        apiKey: "local-key",
+        fanout: { fast: 2, coding: 1 },
+        priority: 10,
+      },
+      {
+        name: "openai-mini",
+        provider: "anthropic",
+        model: "some-model",
+        endpoint: "https://api.openai.com/v1",
+        apiKey: "openai-key",
+        fanout: { fast: 1, smart: 2 },
+        priority: 5,
+      },
+    ];
+
+    const fast = resolveModelRoutes(" FAST ", routes);
+
+    expect(fast).toHaveLength(3);
+    expect(fast.map((route) => route.name)).toEqual(["local-qwen", "local-qwen", "openai-mini"]);
+    expect(fast.map((route) => route.logicalModel)).toEqual(["fast", "fast", "fast"]);
+    expect(fast.map((route) => route.upstreamModel)).toEqual(["qwen3.5-9b", "qwen3.5-9b", "some-model"]);
+    expect(fast[0].endpoint).toBe("http://localhost:8000/v1");
+    expect(fast[0].apiKey).toBe("local-key");
+  });
+
+  it("normalizes shared route metadata and invalid fan-out input", () => {
+    const route = normalizeModelRoute({
+      name: " local-qwen ",
+      provider: "openai",
+      model: " qwen3.5-9b ",
+      endpoint: " http://localhost:8000/v1 ",
+      apiKey: "local-key",
+      aliases: [" Alias ", ""],
+      fanout: { fast: 2, invalid: "2" } as unknown as Record<string, unknown>,
+    });
+
+    expect(route).toEqual({
+      name: "local-qwen",
+      logicalModel: "local-qwen",
+      provider: "openai",
+      upstreamModel: "qwen3.5-9b",
+      model: "qwen3.5-9b",
+      endpoint: "http://localhost:8000/v1",
+      apiKey: "local-key",
+      aliases: ["Alias"],
+      priority: 0,
+      enabled: true,
+      fanout: { fast: 2 },
+    });
+  });
+
+  it("falls back to legacy matching when fan-out input is invalid", () => {
+    const route = normalizeModelRoute({
+      logicalModel: "legacy",
+      provider: "openai",
+      upstreamModel: "gpt-4o",
+      fanout: [] as unknown as Record<string, unknown>,
+    });
+
+    expect(route.fanout).toBeUndefined();
+    expect(resolveModelRoutes("legacy", [route])).toHaveLength(1);
+  });
+
+  it("uses the highest count for case-colliding fan-out keys", () => {
+    const routes: ModelRoute[] = [{
+      name: "local-qwen",
+      provider: "openai",
+      model: "qwen3.5-9b",
+      fanout: { Fast: 1, fast: 2 },
+    }];
+
+    expect(resolveModelRoutes("FAST", routes)).toHaveLength(2);
+  });
+
+  it("treats an empty fan-out as present and suppresses legacy matching", () => {
+    const routes: ModelRoute[] = [{
+      logicalModel: "legacy",
+      provider: "openai",
+      upstreamModel: "gpt-4o",
+      aliases: ["alias"],
+      fanout: {},
+    }];
+
+    expect(resolveModelRoutes("legacy", routes)).toHaveLength(0);
+    expect(resolveModelRoutes("alias", routes)).toHaveLength(0);
+    expect(modelNamesForRoutes(routes)).toEqual([]);
+  });
+
+  it("uses fan-out matching instead of legacy logical-model matching", () => {
+    const routes: ModelRoute[] = [
+      { logicalModel: "legacy", provider: "openai", upstreamModel: "gpt-4o", fanout: { fast: 1 } },
+      { logicalModel: "fast", provider: "anthropic", upstreamModel: "claude", fanout: {} },
+    ];
+
+    expect(resolveModelRoutes("legacy", routes)).toHaveLength(0);
+    expect(resolveModelRoutes("fast", routes)).toHaveLength(1);
+    expect(resolveModelRoutes("fast", routes)[0].provider).toBe("openai");
+  });
+
+  it("uses the resolved upstream model without falling back to the requested name", () => {
+    const routes: ModelRoute[] = [{
+      logicalModel: "legacy",
+      provider: "openai",
+      fanout: { fast: 1 },
+    }];
+
+    const [route] = resolveModelRoutes("fast", routes);
+    expect(route.logicalModel).toBe("fast");
+    expect(route.upstreamModel).toBe("legacy");
+  });
+
+  it("discovers legacy logical and registration names without duplicating aliases", () => {
+    const routes: ModelRoute[] = [
+      { logicalModel: "coder", provider: "openai", upstreamModel: "gpt-4o", aliases: ["gpt4o"] },
+      { name: "writer", provider: "anthropic", upstreamModel: "claude" },
+    ];
+
+    expect(modelNamesForRoutes(routes)).toEqual(["coder", "writer"]);
+    expect(resolveRoutesForState([], routes)).toHaveLength(2);
+    expect(resolveModelRoutes("gpt4o", routes)).toHaveLength(1);
+  });
+
+  it("discovers all valid fan-out model names when state has no explicit models", () => {
+    const routes: ModelRoute[] = [
+      { name: "local-qwen", provider: "openai", model: "qwen", fanout: { fast: 2, coding: 1 } },
+      { name: "openai-mini", provider: "anthropic", model: "mini", fanout: { fast: 1, smart: 2 } },
+    ];
+
+    const resolved = resolveRoutesForState([], routes);
+
+    expect(resolved).toHaveLength(6);
+    expect(resolved.filter((route) => route.logicalModel === "fast")).toHaveLength(3);
+    expect(resolved.filter((route) => route.logicalModel === "coding")).toHaveLength(1);
+    expect(resolved.filter((route) => route.logicalModel === "smart")).toHaveLength(2);
   });
 });
 

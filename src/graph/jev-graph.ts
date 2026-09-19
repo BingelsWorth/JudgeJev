@@ -8,7 +8,7 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { JevStateAnnotation, type JevState, type WorkerAttempt } from "./state.js";
 import { buildJudgeDecision, judgeCandidates } from "../judge/judge.js";
-import { defaultModelRoutes, resolveModelRoutes, type ModelRoute } from "../providers/router.js";
+import { resolveRoutesForState, routeLogicalModel, routeUpstreamModel, type ModelRoute } from "../providers/router.js";
 import type { JevModel } from "../providers/types.js";
 
 export interface JevGraphOptions {
@@ -32,8 +32,8 @@ async function runWorker(
 ): Promise<WorkerAttempt> {
   const worker: WorkerAttempt = {
     id: `worker-${index}`,
-    model: route.logicalModel,
-    upstreamModel: route.upstreamModel,
+    model: routeLogicalModel(route) || route.name || "",
+    upstreamModel: routeUpstreamModel(route) || undefined,
     provider: route.provider,
     status: "running",
     content: "",
@@ -42,8 +42,8 @@ async function runWorker(
   try {
     const model = await options.modelFactory(route);
     const response = await model.complete({
-      model: route.upstreamModel,
-      logicalModel: route.logicalModel,
+      model: routeUpstreamModel(route),
+      logicalModel: routeLogicalModel(route) || undefined,
       messages: [{ role: "user", content: state.request }],
     });
 
@@ -110,11 +110,7 @@ async function judge(state: JevState): Promise<Partial<JevState>> {
 }
 
 function routesForState(state: JevState): ModelRoute[] {
-  const logicalModels = state.models.length
-    ? state.models
-    : [...new Set(state.modelConfigs.map((route) => route.logicalModel))];
-  const routes = state.modelConfigs.length ? state.modelConfigs : defaultModelRoutes(logicalModels);
-  return logicalModels.flatMap((model) => resolveModelRoutes(model, routes));
+  return resolveRoutesForState(state.models, state.modelConfigs);
 }
 
 export function buildJevGraph(options: JevGraphOptions) {
