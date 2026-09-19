@@ -74,8 +74,6 @@ npm run typecheck       # tsc --noEmit
 npm run dev              # wrangler dev
 ```
 
-`test-integration.mjs` (`npx tsx --env-file=.env test-integration.mjs`) exercises a real local provider box and Jev endpoint end-to-end - useful for confirming connectivity that the mocked unit tests can't cover.
-
 
 
 
