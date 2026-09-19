@@ -75,4 +75,4 @@ npm run dev              # wrangler dev
 
 ## Benchmarks
 
-JudgeJev's core claim - fan-out + Jev judging beats a single model call - is checkable, not just asserted. See [`docs/benchmarks/`](docs/benchmarks/) for methodology and results: a concurrency benchmark of the underlying inference server, and an accuracy benchmark (methodology published, results in progress) comparing JudgeJev's winner against single-model baselines.
+JudgeJev's core claim - fan-out + Jev judging beats a single model call - is checkable, not just asserted. See [`benchmarks/`](benchmarks/) for methodology and results: a concurrency benchmark of the underlying inference server, and an accuracy benchmark (methodology published, results in progress) comparing JudgeJev's winner against single-model baselines.

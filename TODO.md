@@ -15,6 +15,7 @@ The original v1 goal is done and live-verified: an LLM fan-out proxy (`/v1/respo
 - Weighted routing, route health, circuit breakers, session affinity, durable routing state.
 - Dashboard, billing, CAPTCHA, image APIs, deployment/replica, metering.
 - Monoize (`Ikaleio/monoize`) remains the reference for non-streaming routing/retry/protocol-conversion behavior if any of the above is picked up.
+- **Concurrency benchmark tooling**: wire up `vllm bench serve` (vLLM's own load-testing tool, targets any OpenAI-compatible endpoint) to measure end-to-end request time through the real JudgeJev proxy (fan-out + rubric selection + judging) vs. the raw inference server directly - separates "how fast is the model" from "how much overhead does JudgeJev add." See [`benchmarks/README.md`](benchmarks/README.md) ("Planned"). Not started - accuracy benchmarking (`benchmarks/lm-eval-harness/`) came first.
 
 ## Decisions worth knowing before touching related code
 
