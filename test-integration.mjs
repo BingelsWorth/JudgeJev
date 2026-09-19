@@ -1,49 +1,44 @@
 #!/usr/bin/env node
-// Integration test against real vLLM endpoint
-// Run with: npx tsx test-integration.mjs
+// Integration test against a real, locally reachable vLLM endpoint.
+// Run with: npx tsx --env-file=.env test-integration.mjs
 
 import { buildJevGraph } from "./src/graph/jev-graph.js";
 import { buildModel, configFromRoute } from "./src/providers/factory.js";
 import { MemoryCredentialStore } from "./src/credentials.js";
 import { callJevJudge } from "./src/jev-client.js";
 import { GENERIC_CODING_RUBRIC } from "./src/contracts.js";
+import { parseModelConfigsEnv, routeUpstreamModel } from "./src/providers/router.js";
 
-const VLLM_BASE_URL = process.env.OPENAI_BASE_URL || "http://192.168.2.106:8000/v1";
-const VLLM_API_KEY = process.env.OPENAI_API_KEY || "dummy";
-// The Jev judging endpoint is a separate typesafe service, not an LLM - there is no
-// stand-in for it at the vLLM box above, so this step only runs when a real Jev
-// deployment is configured.
-const JEV_API_ENDPOINT = process.env.JEV_API_ENDPOINT;
+// Same MODEL_CONFIGS array format the app itself reads from the environment
+// (see .env / env.template). Falls back to this example registration - a real,
+// locally reachable, unauthenticated vLLM box - when MODEL_CONFIGS isn't set.
+const DEFAULT_ROUTE = {
+  name: "local-qwen",
+  provider: "openai",
+  model: "Qwen/Qwen3-1.7B",
+  endpoint: "http://192.168.2.106:8000/v1",
+  apiKey: "unauthenticated",
+  fanout: { fast: 1 },
+};
 
-const credentials = new MemoryCredentialStore();
-await credentials.set("openai", VLLM_API_KEY);
+const [route] = parseModelConfigsEnv(process.env.MODEL_CONFIGS).length
+  ? parseModelConfigsEnv(process.env.MODEL_CONFIGS)
+  : [DEFAULT_ROUTE];
 
-const REAL_MODEL = process.env.VLLM_MODEL || "Qwen/Qwen3-1.7B";
+// Jev is TypeSafe's decision model (docs.typesafe.ai) at a fixed public endpoint -
+// there's no stand-in for it at the vLLM box above, and nothing to configure besides
+// the API key, which is what actually gates this step.
+const JEV_API_KEY = process.env.JEV_API_KEY;
 
 async function testSingleRequest() {
-  console.log(`Testing single request to ${VLLM_BASE_URL}...`);
+  const upstreamModel = routeUpstreamModel(route);
+  console.log(`Testing single request to ${route.endpoint} (${upstreamModel})...`);
 
-  const model = await buildModel(
-    { ...configFromRoute({
-      logicalModel: "gpt-4o",
-      provider: "openai",
-      upstreamModel: REAL_MODEL,
-      priority: 0,
-      enabled: true,
-    }, VLLM_API_KEY), baseUrl: VLLM_BASE_URL },
-    new MemoryCredentialStore()
-  );
-
+  const model = await buildModel(configFromRoute(route), new MemoryCredentialStore());
   console.log(`  Model created: ${model.provider}/${model.id}`);
 
-  // NOTE: this previously omitted `model` here entirely - JSON.stringify silently
-  // drops an undefined field, so the request body never actually carried a model
-  // name. It "worked" only because this vLLM box falls back to its one loaded
-  // model when none is specified; against a real multi-model endpoint it would
-  // have 404'd, same as testFanout did before this file matched its model name
-  // to what's actually served here.
   const result = await model.complete({
-    model: REAL_MODEL,
+    model: upstreamModel,
     messages: [{ role: "user", content: "Say hello in one word" }],
     temperature: 0,
     max_tokens: 300,
@@ -56,27 +51,12 @@ async function testSingleRequest() {
 }
 
 async function testFanout() {
-  console.log(`\nTesting 5x fanout to ${VLLM_BASE_URL}...`);
+  console.log(`\nTesting 5x fanout to ${route.endpoint}...`);
 
-  // A single registration fanned out 5x for the "fast" logical model - this is what
-  // was pre-existing here as `defaultModelRoutes(["gpt-4o"]).slice(0, 5)` with each
-  // route's logicalModel renamed to `gpt-4o-${i}`, which never matched
-  // `state.models: ["gpt-4o"]` below and silently resolved to 0 routes every run.
-  // The upstream model must be the one this box actually serves (REAL_MODEL) -
-  // "gpt-4o" was a placeholder name and gets a real 404 from vLLM, not a silent pass.
-  const routes = [
-    {
-      name: "vllm-box",
-      provider: "openai",
-      model: REAL_MODEL,
-      fanout: { fast: 5 },
-    },
-  ];
+  const routes = [{ ...route, fanout: { fast: 5 } }];
 
   const graph = buildJevGraph({
-    modelFactory: async (route) => {
-      return buildModel({ ...configFromRoute(route, VLLM_API_KEY), baseUrl: VLLM_BASE_URL }, new MemoryCredentialStore());
-    },
+    modelFactory: async (r) => buildModel(configFromRoute(r), new MemoryCredentialStore()),
   });
 
   const state = {
@@ -100,27 +80,27 @@ async function testFanout() {
   };
 
   const result = await graph.invoke(state, { configurable: { thread_id: crypto.randomUUID() } });
-  
+
   console.log(`✓ Fanout complete: ${result.candidates.length} candidates, winner: ${result.winner ? "yes" : "no"}`);
-  
+
   result.candidates.forEach((c, i) => {
     console.log(`  Candidate ${i}: ${c.provider}/${c.upstreamModel} - ${c.content?.slice(0, 50)}...`);
   });
-  
+
   if (result.winner) {
     console.log(`  Winner: ${result.winner.provider}/${result.winner.upstreamModel}`);
   }
-  
+
   return result;
 }
 
 async function testJevJudging() {
-  if (!JEV_API_ENDPOINT) {
-    console.log("\nSkipping Jev judging test: JEV_API_ENDPOINT is not set (no real Jev deployment configured).");
+  if (!JEV_API_KEY) {
+    console.log("\nSkipping Jev judging test: JEV_API_KEY is not set.");
     return;
   }
 
-  console.log(`\nTesting Jev judging (${JEV_API_ENDPOINT})...`);
+  console.log("\nTesting Jev judging (https://api.typesafe.ai/v1/systemone)...");
 
   const requestId = crypto.randomUUID();
   const downstreamRequest = {
@@ -166,10 +146,7 @@ async function testJevJudging() {
     rubric: GENERIC_CODING_RUBRIC,
   };
 
-  const result = await callJevJudge(jevRequest, {
-    endpoint: JEV_API_ENDPOINT,
-    apiKey: process.env.JEV_API_KEY,
-  });
+  const result = await callJevJudge(jevRequest, { apiKey: JEV_API_KEY });
 
   if (!result.ok) {
     throw new Error(`Jev judging failed: ${result.error.code} - ${result.error.message}`);

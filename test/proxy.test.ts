@@ -122,6 +122,68 @@ describe("v1 API endpoints", () => {
       }]);
     });
 
+    it("falls back to MODEL_CONFIGS from the environment when the request supplies no modelConfigs", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const env = createMockEnv({
+        MODEL_CONFIGS: JSON.stringify([
+          { name: "local-qwen", provider: "openai", model: "Qwen/Qwen3-1.7B", endpoint: "http://192.168.2.106:8000/v1", fanout: { fast: 1 } },
+        ]),
+      });
+      const app = createTestApp(env);
+      const res = await app.request(
+        "/v1/responses",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "fast", input: "test" }),
+        },
+        env,
+      );
+
+      expect(res.status).toBe(502);
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.modelConfigs).toEqual([{
+        name: "local-qwen",
+        logicalModel: "local-qwen",
+        provider: "openai",
+        upstreamModel: "Qwen/Qwen3-1.7B",
+        model: "Qwen/Qwen3-1.7B",
+        endpoint: "http://192.168.2.106:8000/v1",
+        priority: 0,
+        enabled: true,
+        fanout: { fast: 1 },
+      }]);
+    });
+
+    it("prefers a request-supplied modelConfigs over MODEL_CONFIGS from the environment", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const env = createMockEnv({ MODEL_CONFIGS: JSON.stringify([{ logicalModel: "from-env", provider: "openai" }]) });
+      const app = createTestApp(env);
+      const res = await app.request(
+        "/v1/responses",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "fast",
+            input: "test",
+            modelConfigs: [{ logicalModel: "from-body", provider: "anthropic", upstreamModel: "claude" }],
+          }),
+        },
+        env,
+      );
+
+      expect(res.status).toBe(502);
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.modelConfigs).toEqual([{
+        logicalModel: "from-body",
+        provider: "anthropic",
+        upstreamModel: "claude",
+        priority: 0,
+        enabled: true,
+      }]);
+    });
+
     it("returns winner response on success", async () => {
       mockInvoke.mockResolvedValue({
         winner: {
@@ -300,12 +362,17 @@ describe("v1 API endpoints", () => {
 
     function jevEnv(overrides: Record<string, string | undefined> = {}) {
       return createMockEnv({
-        JEV_API_ENDPOINT: "https://jev.internal/judge",
+        JEV_API_KEY: "jev-key",
         ...overrides,
       });
     }
 
-    function jevJsonResponse(body: unknown): Response {
+    function jevJsonResponse(choice: string): Response {
+      const body = {
+        model: "jev-1.13.0",
+        answers: { winner: { type: "choice", choice, confidence: 0.9, probabilities: { [choice]: 0.9 } } },
+        usage: { input_tokens: 100, output_tokens: 10 },
+      };
       return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
@@ -319,7 +386,7 @@ describe("v1 API endpoints", () => {
       mockInvoke.mockResolvedValue({ winner: workers[1], workers });
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () => jevJsonResponse({ winnerCandidateId: "worker-0" })),
+        vi.fn(async () => jevJsonResponse("worker-0")),
       );
 
       const app = createTestApp(jevEnv());
@@ -379,7 +446,7 @@ describe("v1 API endpoints", () => {
       expect(json.error.code).toBe("judge_error");
     });
 
-    it("does not call Jev when JEV_API_ENDPOINT is not configured", async () => {
+    it("does not call Jev when JEV_API_KEY is not configured", async () => {
       mockInvoke.mockResolvedValue({ winner: workers[1], workers });
       const fetchSpy = vi.fn();
       vi.stubGlobal("fetch", fetchSpy);

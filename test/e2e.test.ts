@@ -25,15 +25,21 @@ function openAIChatCompletion(model: string, content: string) {
   };
 }
 
-function jevVerdict(winnerCandidateId: string, notes: string[] = []) {
-  return { winnerCandidateId, notes };
+function jevVerdict(choice: string) {
+  return {
+    model: "jev-1.13.0",
+    answers: { winner: { type: "choice", choice, confidence: 0.88, probabilities: { [choice]: 0.88 } } },
+    usage: { input_tokens: 200, output_tokens: 15 },
+  };
 }
 
 const env = {
   OPENAI_API_KEY: "test-key",
-  OPENAI_BASE_URL: "https://fake-openai.test/v1",
+  JEV_API_KEY: "jev-key",
   JEV_API_ENDPOINT: "https://fake-jev.test/judge",
 };
+
+const FAKE_OPENAI_ENDPOINT = "https://fake-openai.test/v1";
 
 function createApp() {
   const app = new Hono<{ Bindings: typeof env }>();
@@ -63,7 +69,7 @@ describe("v1 end-to-end plumbing", () => {
         // longer). Have Jev deliberately pick worker-0 (the shorter one) instead, so this
         // test actually proves Jev's own decision - not the bypass - drives the response,
         // rather than the two coincidentally agreeing.
-        return jsonResponse(jevVerdict("worker-0", ["candidate A was more direct and equally correct"]));
+        return jsonResponse(jevVerdict("worker-0"));
       }
 
       throw new Error(`unexpected fetch to ${url}`);
@@ -80,8 +86,8 @@ describe("v1 end-to-end plumbing", () => {
           model: "fast",
           messages: [{ role: "user", content: "Fix this off-by-one bug." }],
           modelConfigs: [
-            { name: "worker-a", provider: "openai", model: "model-a", fanout: { fast: 1 } },
-            { name: "worker-b", provider: "openai", model: "model-b", fanout: { fast: 1 } },
+            { name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } },
+            { name: "worker-b", provider: "openai", model: "model-b", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } },
           ],
         }),
       },
@@ -103,12 +109,13 @@ describe("v1 end-to-end plumbing", () => {
     expect(providerCallIndexes).toHaveLength(2);
     expect(jevCallIndex).toBeGreaterThan(Math.max(...providerCallIndexes));
 
-    // Prove the Jev call itself carries the full type-safe V1JevRequest payload
-    // (both candidates + the rubric), not just a lightweight prompt.
+    // Prove the Jev call carries both candidates and the rubric as a TypeSafe
+    // "choice" question, not just a lightweight prompt.
     const jevInit = fetchImpl.mock.calls[jevCallIndex][1] as RequestInit;
     const jevRequest = JSON.parse(String(jevInit.body));
-    expect(jevRequest.candidates).toHaveLength(2);
-    expect(jevRequest.rubric.id).toBe("generic-coding-quality-v1");
+    expect(jevRequest.state.candidates).toHaveLength(2);
+    expect(jevRequest.questions.winner.type).toBe("choice");
+    expect(Object.keys(jevRequest.questions.winner.criteria)).toEqual(["worker-0", "worker-1"]);
   });
 
   it("still calls Jev with the surviving candidate when one provider attempt fails", async () => {
@@ -140,8 +147,8 @@ describe("v1 end-to-end plumbing", () => {
           model: "fast",
           messages: [{ role: "user", content: "Fix this off-by-one bug." }],
           modelConfigs: [
-            { name: "worker-a", provider: "openai", model: "model-a", fanout: { fast: 1 }, priority: 0 },
-            { name: "worker-b", provider: "openai", model: "model-b", fanout: { fast: 1 } },
+            { name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 }, priority: 0 },
+            { name: "worker-b", provider: "openai", model: "model-b", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } },
           ],
         }),
       },
@@ -172,7 +179,7 @@ describe("v1 end-to-end plumbing", () => {
         body: JSON.stringify({
           model: "fast",
           messages: [{ role: "user", content: "Fix this off-by-one bug." }],
-          modelConfigs: [{ name: "worker-a", provider: "openai", model: "model-a", fanout: { fast: 1 } }],
+          modelConfigs: [{ name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, fanout: { fast: 1 } }],
         }),
       },
       env,

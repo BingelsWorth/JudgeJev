@@ -1,7 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { callJevJudge } from "../src/jev-client.js";
 import type { RetryOptions } from "../src/providers/errors.js";
-import { v1JevRequest, v1JevResponse } from "./fixtures/contracts.js";
+import { v1JevRequest } from "./fixtures/contracts.js";
+
+function typesafeResponse(choice: string, extra: Record<string, unknown> = {}) {
+  return {
+    model: "jev-1.13.0",
+    answers: {
+      winner: {
+        type: "choice",
+        choice,
+        confidence: 0.92,
+        probabilities: { [choice]: 0.92 },
+      },
+    },
+    usage: { input_tokens: 120, output_tokens: 12 },
+    ...extra,
+  };
+}
 
 function mockFetch(status: number, body: unknown): typeof fetch {
   return vi.fn(async (_input: RequestInfo, _init?: RequestInit) =>
@@ -13,13 +29,13 @@ function mockFetch(status: number, body: unknown): typeof fetch {
 }
 
 const noRetry: RetryOptions = { maxAttempts: 1, sleep: async () => {} };
+const winnerId = v1JevRequest.candidates[0].id;
 
 describe("callJevJudge", () => {
-  it("posts the type-safe V1JevRequest payload as-is and returns the parsed winner", async () => {
-    const fetchImpl = mockFetch(200, v1JevResponse);
+  it("posts a TypeSafe choice question built from the candidates and rubric, to the fixed endpoint by default", async () => {
+    const fetchImpl = mockFetch(200, typesafeResponse(winnerId));
 
     const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
       apiKey: "jev-key",
       retry: noRetry,
       fetch: fetchImpl,
@@ -27,38 +43,54 @@ describe("callJevJudge", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok result");
-    expect(result.response.winnerCandidateId).toBe(v1JevRequest.candidates[0].id);
-    expect(result.response.endpoint).toBe("responses");
+    expect(result.response.winnerCandidateId).toBe(winnerId);
+    expect(result.response.metadata?.confidence).toBe(0.92);
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe("https://jev.internal/judge");
+    expect(url).toBe("https://api.typesafe.ai/v1/systemone");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer jev-key");
-    expect(JSON.parse(init.body)).toEqual(v1JevRequest);
+
+    const body = JSON.parse(init.body);
+    expect(body.model).toBe("jev-latest");
+    expect(body.state.candidates).toEqual(
+      v1JevRequest.candidates.map((c) => ({ id: c.id, content: c.content })),
+    );
+    expect(body.questions.winner.type).toBe("choice");
+    expect(Object.keys(body.questions.winner.criteria)).toEqual(
+      v1JevRequest.candidates.map((c) => c.id),
+    );
   });
 
-  it("omits the Authorization header when no API key is configured", async () => {
-    const fetchImpl = mockFetch(200, v1JevResponse);
+  it("uses a caller-supplied endpoint and model instead of the defaults", async () => {
+    const fetchImpl = mockFetch(200, typesafeResponse(winnerId));
 
     await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
+      endpoint: "https://mock.test/systemone",
+      model: "jev-preview",
       retry: noRetry,
       fetch: fetchImpl,
     });
+
+    const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("https://mock.test/systemone");
+    expect(JSON.parse(init.body).model).toBe("jev-preview");
+  });
+
+  it("omits the Authorization header when no API key is configured", async () => {
+    const fetchImpl = mockFetch(200, typesafeResponse(winnerId));
+
+    await callJevJudge(v1JevRequest, { retry: noRetry, fetch: fetchImpl });
 
     const [, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(init.headers.Authorization).toBeUndefined();
   });
 
-  it("rejects a winnerCandidateId that was not among the submitted candidates", async () => {
-    const fetchImpl = mockFetch(200, { ...v1JevResponse, winnerCandidateId: "not-a-real-candidate" });
+  it("rejects a winner choice that was not among the submitted candidates", async () => {
+    const fetchImpl = mockFetch(200, typesafeResponse("not-a-real-candidate"));
 
-    const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
-      retry: noRetry,
-      fetch: fetchImpl,
-    });
+    const result = await callJevJudge(v1JevRequest, { retry: noRetry, fetch: fetchImpl });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected error result");
@@ -66,28 +98,20 @@ describe("callJevJudge", () => {
     expect(result.error.status).toBe(502);
   });
 
-  it("rejects a response body missing winnerCandidateId", async () => {
-    const fetchImpl = mockFetch(200, { requestId: v1JevRequest.requestId, endpoint: "responses" });
+  it("rejects a response with no winner answer", async () => {
+    const fetchImpl = mockFetch(200, { model: "jev-1.13.0", answers: {}, usage: {} });
 
-    const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
-      retry: noRetry,
-      fetch: fetchImpl,
-    });
+    const result = await callJevJudge(v1JevRequest, { retry: noRetry, fetch: fetchImpl });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected error result");
-    expect(result.error.message).toMatch(/winnerCandidateId/);
+    expect(result.error.message).toMatch(/decodable winner choice/);
   });
 
   it("rejects a non-JSON response body", async () => {
     const fetchImpl = mockFetch(200, "not json");
 
-    const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
-      retry: noRetry,
-      fetch: fetchImpl,
-    });
+    const result = await callJevJudge(v1JevRequest, { retry: noRetry, fetch: fetchImpl });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected error result");
@@ -95,13 +119,9 @@ describe("callJevJudge", () => {
   });
 
   it("maps a non-2xx endpoint error to a judge_error", async () => {
-    const fetchImpl = mockFetch(500, { error: { message: "judge is overloaded" } });
+    const fetchImpl = mockFetch(401, { detail: "Missing or invalid API key" });
 
-    const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
-      retry: noRetry,
-      fetch: fetchImpl,
-    });
+    const result = await callJevJudge(v1JevRequest, { retry: noRetry, fetch: fetchImpl });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected error result");
@@ -109,17 +129,15 @@ describe("callJevJudge", () => {
     // Always reports 502 regardless of the judge endpoint's own status - JudgeJev is
     // the gateway, so client-facing codes describe its contract, not a dependency's.
     expect(result.error.status).toBe(502);
-    expect(result.error.message).toBe("judge is overloaded");
   });
 
-  it("retries a transient endpoint failure before succeeding", async () => {
+  it("retries a 529 (TypeSafe's overloaded status) before succeeding", async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "temporarily unavailable" } }), { status: 503 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(v1JevResponse), { status: 200 })) as unknown as typeof fetch;
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "overloaded" }), { status: 529 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(typesafeResponse(winnerId)), { status: 200 })) as unknown as typeof fetch;
 
     const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
       retry: { maxAttempts: 2, sleep: async () => {} },
       fetch: fetchImpl,
     });
@@ -128,11 +146,10 @@ describe("callJevJudge", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it("does not retry an authentication failure", async () => {
-    const fetchImpl = mockFetch(401, { error: { message: "bad jev api key" } });
+  it("does not retry a 401", async () => {
+    const fetchImpl = mockFetch(401, { detail: "Missing or invalid API key" });
 
     const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
       retry: { maxAttempts: 3, sleep: async () => {} },
       fetch: fetchImpl,
     });
@@ -146,11 +163,7 @@ describe("callJevJudge", () => {
       throw new TypeError("fetch failed");
     }) as unknown as typeof fetch;
 
-    const result = await callJevJudge(v1JevRequest, {
-      endpoint: "https://jev.internal/judge",
-      retry: noRetry,
-      fetch: fetchImpl,
-    });
+    const result = await callJevJudge(v1JevRequest, { retry: noRetry, fetch: fetchImpl });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected error result");
@@ -159,13 +172,9 @@ describe("callJevJudge", () => {
   });
 
   it("rejects before making a request when there are no candidates", async () => {
-    const fetchImpl = mockFetch(200, v1JevResponse);
+    const fetchImpl = mockFetch(200, typesafeResponse(winnerId));
 
-    const result = await callJevJudge({ ...v1JevRequest, candidates: [] }, {
-      endpoint: "https://jev.internal/judge",
-      retry: noRetry,
-      fetch: fetchImpl,
-    });
+    const result = await callJevJudge({ ...v1JevRequest, candidates: [] }, { retry: noRetry, fetch: fetchImpl });
 
     expect(result.ok).toBe(false);
     expect(fetchImpl).not.toHaveBeenCalled();

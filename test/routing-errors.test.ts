@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { UpstreamError, classifyRetryableFailure, isRetryableError, retryWithBackoff } from "../src/providers/errors.js";
-import { defaultModelRoutes, modelNamesForRoutes, normalizeModelName, normalizeModelRoute, resolveModelRoutes, resolveRoutesForState } from "../src/providers/router.js";
+import { defaultModelRoutes, modelNamesForRoutes, normalizeModelName, normalizeModelRoute, parseModelConfigsEnv, resolveModelRoutes, resolveRoutesForState } from "../src/providers/router.js";
 import type { ModelRoute } from "../src/providers/router.js";
 
 describe("route resolution", () => {
@@ -199,6 +199,34 @@ describe("route resolution", () => {
     expect(resolved.filter((route) => route.logicalModel === "fast")).toHaveLength(3);
     expect(resolved.filter((route) => route.logicalModel === "coding")).toHaveLength(1);
     expect(resolved.filter((route) => route.logicalModel === "smart")).toHaveLength(2);
+  });
+});
+
+describe("parseModelConfigsEnv", () => {
+  it("parses a JSON array of route registrations, same shape as the request body's modelConfigs", () => {
+    const routes = parseModelConfigsEnv(JSON.stringify([
+      { name: "local-qwen", provider: "openai", model: "Qwen/Qwen3-1.7B", endpoint: "http://localhost:8000/v1", fanout: { fast: 1 } },
+    ]));
+
+    expect(routes).toEqual([{
+      name: "local-qwen",
+      logicalModel: "local-qwen",
+      provider: "openai",
+      upstreamModel: "Qwen/Qwen3-1.7B",
+      model: "Qwen/Qwen3-1.7B",
+      endpoint: "http://localhost:8000/v1",
+      priority: 0,
+      enabled: true,
+      fanout: { fast: 1 },
+    }]);
+  });
+
+  it("returns an empty array for unset, blank, non-array, or malformed input", () => {
+    expect(parseModelConfigsEnv(undefined)).toEqual([]);
+    expect(parseModelConfigsEnv("")).toEqual([]);
+    expect(parseModelConfigsEnv("   ")).toEqual([]);
+    expect(parseModelConfigsEnv("{}")).toEqual([]);
+    expect(parseModelConfigsEnv("not json")).toEqual([]);
   });
 });
 

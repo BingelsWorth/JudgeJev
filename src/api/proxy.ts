@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { buildJevGraph } from "../graph/jev-graph.js";
 import type { WorkerAttempt } from "../graph/state.js";
-import { normalizeModelConfigs, type ModelRoute, type ModelRouteInput } from "../providers/router.js";
+import { defaultModelRoutes, normalizeModelConfigs, parseModelConfigsEnv, type ModelRoute, type ModelRouteInput } from "../providers/router.js";
 import { callJevJudge } from "../jev-client.js";
 import {
   V1_ENDPOINT_MATRIX,
@@ -37,12 +37,14 @@ interface V1ApiBindings {
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
-  OPENAI_BASE_URL?: string;
-  ANTHROPIC_BASE_URL?: string;
-  GEMINI_BASE_URL?: string;
-  /** Base URL of the actual Jev judging API (a separate typesafe service, not an LLM we prompt). Unset = keep using the local bypass heuristic. */
-  JEV_API_ENDPOINT?: string;
+  /** Default route registrations (endpoint + token + fan-out dict per entry), same JSON array shape as the request body's `modelConfigs`. Used when a request doesn't supply its own. */
+  MODEL_CONFIGS?: string;
+  /** API key for Jev (https://docs.typesafe.ai), a fixed public API at a well-known address - not one of our own model routes. Unset = keep using the local bypass heuristic; set = Jev actually judges. */
   JEV_API_KEY?: string;
+  /** Overrides Jev's fixed API endpoint. Only for tests/mocks - there is nothing to configure here for real use. */
+  JEV_API_ENDPOINT?: string;
+  /** Jev model version. Defaults to "jev-latest" (TypeSafe's recommended default) when unset. */
+  JEV_MODEL?: string;
   /** "fallback" (default) silently falls back to the local heuristic if the Jev call fails; "error" surfaces a judge_error instead, useful while testing that Jev is actually being exercised. */
   JEV_ON_FAILURE?: string;
 }
@@ -74,26 +76,26 @@ interface V1RequestBody {
   modelConfigs?: V1RouteConfig[];
 }
 
-function getProviderConfig(env: V1ApiBindings, provider: string): { apiKey: string | undefined; baseUrl: string | undefined } {
+function getProviderApiKey(env: V1ApiBindings, provider: string): string | undefined {
   switch (provider) {
     case "openai":
-      return { apiKey: env.OPENAI_API_KEY, baseUrl: env.OPENAI_BASE_URL };
+      return env.OPENAI_API_KEY;
     case "anthropic":
-      return { apiKey: env.ANTHROPIC_API_KEY, baseUrl: env.ANTHROPIC_BASE_URL };
+      return env.ANTHROPIC_API_KEY;
     case "gemini":
-      return { apiKey: env.GEMINI_API_KEY, baseUrl: env.GEMINI_BASE_URL };
+      return env.GEMINI_API_KEY;
     default:
-      return { apiKey: undefined, baseUrl: undefined };
+      return undefined;
   }
 }
 
 function buildV1Graph(env: V1ApiBindings) {
   return buildJevGraph({
     modelFactory: async (route: ModelRoute) => {
-      const { apiKey, baseUrl } = getProviderConfig(env, route.provider);
+      const apiKey = getProviderApiKey(env, route.provider);
       const { buildModel, configFromRoute } = await import("../providers/factory.js");
-      return buildModel(configFromRoute(route, apiKey, baseUrl), {
-        get: async (provider: string) => getProviderConfig(env, provider).apiKey ?? "",
+      return buildModel(configFromRoute(route, apiKey), {
+        get: async (provider: string) => getProviderApiKey(env, provider) ?? "",
       } as any);
     },
   });
@@ -380,7 +382,9 @@ async function runJevJudge<E extends V1Endpoint>(
   endpoint: E,
   request: V1DownstreamRequest,
 ): Promise<JevJudgeOutcome> {
-  if (!env.JEV_API_ENDPOINT) return { called: false };
+  // Jev's endpoint is fixed and public (https://docs.typesafe.ai) - there's nothing to
+  // point it at. Whether Jev actually judges is gated on having an API key, not an endpoint.
+  if (!env.JEV_API_KEY) return { called: false };
 
   const protocol = V1_ENDPOINT_MATRIX[endpoint].protocol as V1ProtocolForEndpoint<E>;
   const attempts = buildJevAttempts(workers, endpoint, protocol, request);
@@ -402,6 +406,7 @@ async function runJevJudge<E extends V1Endpoint>(
   const outcome = await callJevJudge(jevRequest, {
     endpoint: env.JEV_API_ENDPOINT,
     apiKey: env.JEV_API_KEY,
+    model: env.JEV_MODEL,
     // Keep this well inside a Worker's request budget: one retry, short backoff.
     retry: { maxAttempts: 2, baseDelayMs: 250, maxDelayMs: 1000 },
   });
@@ -472,12 +477,13 @@ async function handleV1Request(
     const rawBody = await c.req.json();
     const validatedRequest = validateRequestBody(rawBody, endpoint);
     const parsedConfigs = modelConfigSchema.array().optional().parse(rawBody.modelConfigs);
-    const modelConfigs = normalizeModelConfigs(parsedConfigs);
+    const bodyModelConfigs = normalizeModelConfigs(parsedConfigs);
+    const modelConfigs = bodyModelConfigs.length ? bodyModelConfigs : parseModelConfigsEnv(env.MODEL_CONFIGS);
 
     const graph = buildV1Graph(env);
     const routes = modelConfigs.length
       ? modelConfigs
-      : (await import("../providers/router.js")).defaultModelRoutes([validatedRequest.model]);
+      : defaultModelRoutes([validatedRequest.model]);
 
     const result = await graph.invoke({
       request: JSON.stringify(validatedRequest),

@@ -16,7 +16,7 @@ import { buildJevGraph } from "./graph/jev-graph.js";
 import { D1RunRepository, MemoryRunRepository, type RunRepository } from "./run-repository.js";
 import { buildModel, configFromRoute } from "./providers/factory.js";
 import { MemoryCredentialStore } from "./credentials.js";
-import { defaultModelRoutes, modelNamesForRoutes, normalizeModelRoute, type ModelRoute, type ModelRouteInput } from "./providers/router.js";
+import { defaultModelRoutes, modelNamesForRoutes, normalizeModelRoute, parseModelConfigsEnv, type ModelRoute, type ModelRouteInput } from "./providers/router.js";
 import type { JevRunState } from "./graph/state.js";
 import type { ProviderId } from "./providers/types.js";
 import { createV1Router } from "./api/proxy.js";
@@ -27,9 +27,8 @@ type Bindings = {
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
-  OPENAI_BASE_URL?: string;
-  ANTHROPIC_BASE_URL?: string;
-  GEMINI_BASE_URL?: string;
+  /** Default route registrations (endpoint + token + fan-out dict per entry), same JSON array shape as the request body's `modelConfigs`. Used when a request doesn't supply its own. */
+  MODEL_CONFIGS?: string;
 };
 
 interface RunBody {
@@ -70,14 +69,14 @@ function getRepo(c: { env: Bindings }): RunRepository {
   return c.env.JUDGE_JEV_RUNS ? new D1RunRepository(c.env.JUDGE_JEV_RUNS) : new MemoryRunRepository();
 }
 
-function getProviderConfig(env: Bindings, provider: ProviderId): { apiKey: string | undefined; baseUrl: string | undefined } {
+function getProviderApiKey(env: Bindings, provider: ProviderId): string | undefined {
   switch (provider) {
     case "openai":
-      return { apiKey: env.OPENAI_API_KEY, baseUrl: env.OPENAI_BASE_URL };
+      return env.OPENAI_API_KEY;
     case "anthropic":
-      return { apiKey: env.ANTHROPIC_API_KEY, baseUrl: env.ANTHROPIC_BASE_URL };
+      return env.ANTHROPIC_API_KEY;
     case "gemini":
-      return { apiKey: env.GEMINI_API_KEY, baseUrl: env.GEMINI_BASE_URL };
+      return env.GEMINI_API_KEY;
   }
 }
 
@@ -89,8 +88,9 @@ function normalizeModelConfigs(configs: ModelRouteInput[] | undefined): ModelRou
   return (configs ?? []).map(normalizeModelRoute);
 }
 
-function normalizeRunBody(body: RunBody): { models: string[]; modelConfigs: ModelRoute[] } {
-  const modelConfigs = normalizeModelConfigs(body.modelConfigs);
+function normalizeRunBody(body: RunBody, env: Bindings): { models: string[]; modelConfigs: ModelRoute[] } {
+  const bodyModelConfigs = normalizeModelConfigs(body.modelConfigs);
+  const modelConfigs = bodyModelConfigs.length ? bodyModelConfigs : parseModelConfigsEnv(env.MODEL_CONFIGS);
   const models = (body.models ?? [])
     .map((model) => model.trim())
     .filter(Boolean);
@@ -106,8 +106,8 @@ function buildGraph(c: { env: Bindings }) {
   const credentials = new MemoryCredentialStore();
   return buildJevGraph({
     modelFactory: async (route) => {
-      const { apiKey, baseUrl } = getProviderConfig(c.env, route.provider);
-      return buildModel(configFromRoute(route, apiKey, baseUrl), credentials);
+      const apiKey = getProviderApiKey(c.env, route.provider);
+      return buildModel(configFromRoute(route, apiKey), credentials);
     },
   });
 }
@@ -122,7 +122,7 @@ app.post("/runs", async (c) => {
     return c.json({ error: "modelConfigs require logicalModel or name and a supported provider" }, 400);
   }
 
-  const { models, modelConfigs } = normalizeRunBody(body);
+  const { models, modelConfigs } = normalizeRunBody(body, c.env);
   const repo = getRepo(c);
   const initialState: JevRunState = {
     request: body.request,

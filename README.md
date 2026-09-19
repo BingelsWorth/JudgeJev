@@ -36,17 +36,20 @@ Each entry in `modelConfigs` is a route registration:
 
 `fanout` is a dictionary of logical model name -> attempt count. When an inbound request asks for `model: "fast"`, JudgeJev walks every registered route, and for each one whose `fanout` map has a `"fast"` entry, fans out that many concurrent calls to it. A route with no `fanout` falls back to matching its own `name`/`logicalModel`/`aliases` directly (legacy single-route behavior).
 
+When a request doesn't supply its own `modelConfigs`, JudgeJev falls back to the `MODEL_CONFIGS` environment variable - the same JSON array shape, letting you register default routes (e.g. a local box) without repeating them on every call. There is no separate per-provider base-URL setting; a route's `endpoint` is the only way to point it somewhere other than the provider's real API.
+
 ## Jev judging
 
-JudgeJev is an LLM fan-out proxy: it fans one request out to every configured provider/model route, then hands the results to Jev - a separate, typesafe judging service, not an LLM JudgeJev prompts itself and not one of the models in its own fan-out list - which decides which candidate wins.
+JudgeJev is an LLM fan-out proxy: it fans one request out to every configured provider/model route, then hands the results to Jev - [TypeSafe's](https://docs.typesafe.ai) decision model, a fixed public API, not an LLM JudgeJev prompts itself and not one of the models in its own fan-out list - which decides which candidate wins.
 
-`src/jev-client.ts` POSTs the type-safe `V1JevRequest` (the original request, every candidate, and the generic coding-quality rubric) to `JEV_API_ENDPOINT` and expects a JSON `V1JevResponse` back (`{ winnerCandidateId, notes? }`).
+`src/jev-client.ts` adapts the original request, every candidate, and the generic coding-quality rubric into a single TypeSafe [`choice`](https://docs.typesafe.ai/primitives/choice) question (`POST https://api.typesafe.ai/v1/systemone`) - the candidate ids are the options, their content lives in `state`, and the rubric becomes the instructions - then decodes the winning choice back into JudgeJev's response.
 
-- `JEV_API_ENDPOINT` unset (default): skip Jev entirely and serve the longest-candidate local heuristic. This is the dev-time bypass - useful before a Jev deployment exists to point at.
-- `JEV_API_ENDPOINT` set: after the fan-out barrier, POST the candidates to that endpoint and return its chosen candidate unchanged.
+- `JEV_API_KEY` unset (default): skip Jev entirely and serve the longest-candidate local heuristic. This is the dev-time bypass - useful before you have a Jev key.
+- `JEV_API_KEY` set: after the fan-out barrier, ask Jev to choose and return its chosen candidate unchanged. There's no endpoint to configure - it's fixed and public.
+- `JEV_MODEL`: which Jev version to use (`jev-latest`, `jev-preview`, or a pinned version). Defaults to `jev-latest`.
 - `JEV_ON_FAILURE`: if the Jev call itself fails (network error, undecodable verdict, etc.), `fallback` (default) silently serves the local heuristic's winner; `error` returns a `judge_error` instead. Use `error` while testing Jev integration so a broken call can't be masked by the fallback.
 
-See [`env.template`](env.template) for the full list of environment variables (provider keys/base URLs, D1 binding, Jev config).
+See [`env.template`](env.template) for the full list of environment variables (provider keys, `MODEL_CONFIGS`, D1 binding, Jev config).
 
 ## Local development
 
@@ -58,7 +61,7 @@ npm run typecheck       # tsc --noEmit
 npm run dev              # wrangler dev
 ```
 
-`test-integration.mjs` (`npx tsx test-integration.mjs`) exercises a real local provider box and Jev endpoint end-to-end - useful for confirming connectivity that the mocked unit tests can't cover.
+`test-integration.mjs` (`npx tsx --env-file=.env test-integration.mjs`) exercises a real local provider box and Jev endpoint end-to-end - useful for confirming connectivity that the mocked unit tests can't cover.
 
 
 

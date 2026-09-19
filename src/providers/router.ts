@@ -51,6 +51,25 @@ export function normalizeModelConfigs(configs: ModelRouteInput[] | undefined): M
   return (configs ?? []).map(normalizeModelRoute);
 }
 
+/**
+ * Parses the MODEL_CONFIGS env var: the same JSON array shape as the request
+ * body's `modelConfigs` field ([{name, provider, model, endpoint, apiKey,
+ * fanout}, ...]), used as the default route set when a request doesn't supply
+ * its own. Invalid or absent input yields an empty array rather than
+ * throwing, so a malformed env var degrades to the hardcoded default route
+ * instead of failing every request.
+ */
+export function parseModelConfigsEnv(raw: string | undefined): ModelRoute[] {
+  if (!raw || !raw.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return normalizeModelConfigs(parsed as ModelRouteInput[]);
+  } catch {
+    return [];
+  }
+}
+
 export function normalizeModelName(model: string): string {
   return model.trim().toLowerCase();
 }

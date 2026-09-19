@@ -93,6 +93,40 @@ describe("POST /runs model configurations", () => {
       enabled: true,
     }]);
   });
+
+  it("falls back to MODEL_CONFIGS from the environment when the request supplies no modelConfigs", async () => {
+    const res = await createRun({ request: "test" }, {
+      MODEL_CONFIGS: JSON.stringify([
+        { name: "local-qwen", provider: "openai", model: "Qwen/Qwen3-1.7B", endpoint: "http://192.168.2.106:8000/v1", fanout: { fast: 1 } },
+      ]),
+    });
+
+    expect(res.status).toBe(201);
+    const json: any = await res.json();
+    expect(json.state.models).toEqual(["fast"]);
+    expect(json.state.modelConfigs).toEqual([{
+      name: "local-qwen",
+      logicalModel: "local-qwen",
+      provider: "openai",
+      upstreamModel: "Qwen/Qwen3-1.7B",
+      model: "Qwen/Qwen3-1.7B",
+      endpoint: "http://192.168.2.106:8000/v1",
+      priority: 0,
+      enabled: true,
+      fanout: { fast: 1 },
+    }]);
+  });
+
+  it("prefers a request-supplied modelConfigs over MODEL_CONFIGS from the environment", async () => {
+    const res = await createRun(
+      { request: "test", modelConfigs: [{ logicalModel: "from-body", provider: "anthropic", upstreamModel: "claude" }] },
+      { MODEL_CONFIGS: JSON.stringify([{ logicalModel: "from-env", provider: "openai" }]) },
+    );
+
+    expect(res.status).toBe(201);
+    const json: any = await res.json();
+    expect(json.state.models).toEqual(["from-body"]);
+  });
 });
 
 describe("buildJevGraph", () => {
