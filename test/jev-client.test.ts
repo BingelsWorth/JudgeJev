@@ -195,13 +195,13 @@ describe("selectRubric", () => {
   const rubrics = listRubrics();
 
   it("posts every rubric as a choice option, keyed by id, and returns the one Jev picks", async () => {
-    const fetchImpl = mockFetch(200, typesafeRubricResponse("coding-v1"));
+    const fetchImpl = mockFetch(200, typesafeRubricResponse("coding"));
 
     const result = await selectRubric(request, rubrics, { apiKey: "jev-key", retry: noRetry, fetch: fetchImpl });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok result");
-    expect(result.rubricId).toBe("coding-v1");
+    expect(result.rubricId).toBe("coding");
     expect(result.confidence).toBe(0.81);
 
     const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -235,7 +235,7 @@ describe("selectRubric", () => {
   });
 
   it("rejects before making a request when no rubrics are offered", async () => {
-    const fetchImpl = mockFetch(200, typesafeRubricResponse("coding-v1"));
+    const fetchImpl = mockFetch(200, typesafeRubricResponse("coding"));
 
     const result = await selectRubric(request, [], { retry: noRetry, fetch: fetchImpl });
 

@@ -4,16 +4,22 @@ import { DEFAULT_RUBRIC_ID, RUBRICS, getRubric, listRubrics } from "../src/rubri
 describe("rubrics", () => {
   it("exposes the default general-purpose rubric", () => {
     const rubric = RUBRICS[DEFAULT_RUBRIC_ID];
-    expect(rubric.id).toBe("general-v1");
+    expect(rubric.id).toBe("general");
     expect(rubric.description).toBeTruthy();
     expect(rubric.questions.length).toBeGreaterThan(0);
   });
 
   it("exposes a coding-specific rubric distinct from the default", () => {
-    const rubric = RUBRICS["coding-v1"];
-    expect(rubric.id).toBe("coding-v1");
+    const rubric = RUBRICS["coding"];
+    expect(rubric.id).toBe("coding");
     expect(rubric.id).not.toBe(DEFAULT_RUBRIC_ID);
     expect(rubric.description).toBeTruthy();
+  });
+
+  it("exposes the full default set of domain rubrics", () => {
+    expect(Object.keys(RUBRICS).sort()).toEqual(
+      ["coding", "general", "math", "tool-call", "translation"].sort(),
+    );
   });
 
   it("every rubric has a non-empty id, description, instruction, and at least one question", () => {
@@ -31,7 +37,7 @@ describe("rubrics", () => {
 
   describe("getRubric", () => {
     it("returns the requested rubric by id", () => {
-      expect(getRubric("coding-v1").id).toBe("coding-v1");
+      expect(getRubric("coding").id).toBe("coding");
     });
 
     it("falls back to the default rubric for an unknown id", () => {

@@ -476,7 +476,7 @@ describe("v1 API endpoints", () => {
       mockInvoke.mockResolvedValue({ winner: workers[1], workers });
       const fetchImpl = vi.fn(async (_input: RequestInfo, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body ?? "{}"));
-        if (body.questions?.rubric) return jevRubricResponse("coding-v1");
+        if (body.questions?.rubric) return jevRubricResponse("coding");
         return jevJsonResponse("worker-0");
       });
       vi.stubGlobal("fetch", fetchImpl);

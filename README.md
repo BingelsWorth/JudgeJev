@@ -58,7 +58,9 @@ Two Jev calls happen per request, not one:
 1. **Rubric selection**, fired alongside the fan-out (not after it) - Jev is given the original request and every registered rubric's `description`, and picks the best fit. Since this runs concurrently with the provider calls, it's normally already resolved by the time there are candidates to judge, at no added latency.
 2. **Judging**, once candidates are in - the selected rubric's questions become the judge's instructions.
 
-If rubric selection fails or `JEV_API_KEY` is unset, it silently falls back to the default rubric (`general-v1`) - that failure never surfaces as a `judge_error` or interacts with `JEV_ON_FAILURE`, which only governs the judging call itself.
+If rubric selection fails or `JEV_API_KEY` is unset, it silently falls back to the default rubric (`general`) - that failure never surfaces as a `judge_error` or interacts with `JEV_ON_FAILURE`, which only governs the judging call itself.
+
+Registered by default: `general`, `coding`, `math`, `tool-call`, `translation`.
 
 See [`env.template`](env.template) for the full list of environment variables (`MODEL_CONFIGS`, Jev config).
 

@@ -80,7 +80,7 @@ describe("v1 end-to-end plumbing", () => {
 
       if (url.startsWith("https://fake-jev.test/") && isRubricSelectionBody(body)) {
         calls.push({ url, kind: "jev-rubric" });
-        return jsonResponse(jevRubricVerdict("coding-v1"));
+        return jsonResponse(jevRubricVerdict("coding"));
       }
 
       if (url.startsWith("https://fake-jev.test/")) {
@@ -144,8 +144,8 @@ describe("v1 end-to-end plumbing", () => {
     const rubricCallIndex = calls.findIndex((c) => c.kind === "jev-rubric");
     const rubricInit = fetchImpl.mock.calls[rubricCallIndex][1] as RequestInit;
     const rubricRequest = JSON.parse(String(rubricInit.body));
-    expect(rubricRequest.questions.rubric.criteria).toHaveProperty("general-v1");
-    expect(rubricRequest.questions.rubric.criteria).toHaveProperty("coding-v1");
+    expect(rubricRequest.questions.rubric.criteria).toHaveProperty("general");
+    expect(rubricRequest.questions.rubric.criteria).toHaveProperty("coding");
   });
 
   it("still calls Jev with the surviving candidate when one provider attempt fails", async () => {
@@ -161,7 +161,7 @@ describe("v1 end-to-end plumbing", () => {
         return jsonResponse(openAIChatCompletion(body.model, "candidate B: the only survivor"));
       }
       if (url.startsWith("https://fake-jev.test/") && isRubricSelectionBody(body)) {
-        return jsonResponse(jevRubricVerdict("general-v1"));
+        return jsonResponse(jevRubricVerdict("general"));
       }
       if (url.startsWith("https://fake-jev.test/")) {
         return jsonResponse(jevJudgeVerdict("worker-1"));
@@ -201,7 +201,7 @@ describe("v1 end-to-end plumbing", () => {
       }
       if (url.startsWith("https://fake-jev.test/")) {
         const body = JSON.parse(String(init?.body ?? "{}"));
-        if (isRubricSelectionBody(body)) return jsonResponse(jevRubricVerdict("general-v1"));
+        if (isRubricSelectionBody(body)) return jsonResponse(jevRubricVerdict("general"));
         throw new Error("judge should never be called when there are no candidates");
       }
       throw new Error(`unexpected fetch to ${url}`);
