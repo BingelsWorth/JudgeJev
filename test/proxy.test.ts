@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import type { V1Error } from "../src/v1/contracts.js";
+import type { V1Error } from "../src/contracts.js";
 
 const mockInvoke = vi.fn();
 const mockBuildJevGraph = vi.fn(() => ({ invoke: mockInvoke }));
@@ -14,7 +14,7 @@ vi.mock("../src/providers/factory.js", () => ({
   configFromRoute: vi.fn(),
 }));
 
-const { createV1Router } = await import("../src/api/v1.js");
+const { createV1Router } = await import("../src/api/proxy.js");
 
 function createTestApp(env: Record<string, string | undefined> = {}) {
   const app = new Hono<{ Bindings: typeof env }>();
@@ -300,22 +300,13 @@ describe("v1 API endpoints", () => {
 
     function jevEnv(overrides: Record<string, string | undefined> = {}) {
       return createMockEnv({
-        JEV_API_ENDPOINT: "http://192.168.2.106:8000/v1",
-        JEV_MODEL: "Qwen/Qwen3-1.7B",
+        JEV_API_ENDPOINT: "https://jev.internal/judge",
         ...overrides,
       });
     }
 
-    function chatCompletionStream(content: string): Response {
-      const encoder = new TextEncoder();
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`));
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.close();
-        },
-      });
-      return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    function jevJsonResponse(body: unknown): Response {
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     afterEach(() => {
@@ -328,7 +319,7 @@ describe("v1 API endpoints", () => {
       mockInvoke.mockResolvedValue({ winner: workers[1], workers });
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () => chatCompletionStream(JSON.stringify({ winnerCandidateId: "worker-0" }))),
+        vi.fn(async () => jevJsonResponse({ winnerCandidateId: "worker-0" })),
       );
 
       const app = createTestApp(jevEnv());

@@ -13,13 +13,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { buildJevGraph } from "./graph/jev-graph.js";
-import { D1RunRepository, MemoryRunRepository, type RunRepository } from "./runs/repository.js";
+import { D1RunRepository, MemoryRunRepository, type RunRepository } from "./run-repository.js";
 import { buildModel, configFromRoute } from "./providers/factory.js";
-import { MemoryCredentialStore } from "./auth/credentials.js";
+import { MemoryCredentialStore } from "./credentials.js";
 import { defaultModelRoutes, modelNamesForRoutes, normalizeModelRoute, type ModelRoute, type ModelRouteInput } from "./providers/router.js";
 import type { JevRunState } from "./graph/state.js";
 import type { ProviderId } from "./providers/types.js";
-import { createV1Router } from "./api/v1.js";
+import { createV1Router } from "./api/proxy.js";
 
 type Bindings = {
   JUDGE_JEV_RUNS?: D1Database;

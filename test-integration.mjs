@@ -4,14 +4,16 @@
 
 import { buildJevGraph } from "./src/graph/jev-graph.js";
 import { buildModel, configFromRoute } from "./src/providers/factory.js";
-import { MemoryCredentialStore } from "./src/auth/credentials.js";
-import { callJevJudge } from "./src/jev/client.js";
-import { GENERIC_CODING_RUBRIC } from "./src/v1/contracts.js";
+import { MemoryCredentialStore } from "./src/credentials.js";
+import { callJevJudge } from "./src/jev-client.js";
+import { GENERIC_CODING_RUBRIC } from "./src/contracts.js";
 
 const VLLM_BASE_URL = process.env.OPENAI_BASE_URL || "http://192.168.2.106:8000/v1";
 const VLLM_API_KEY = process.env.OPENAI_API_KEY || "dummy";
-const JEV_API_ENDPOINT = process.env.JEV_API_ENDPOINT || VLLM_BASE_URL;
-const JEV_MODEL = process.env.JEV_MODEL || "Qwen/Qwen3-1.7B";
+// The Jev judging endpoint is a separate typesafe service, not an LLM - there is no
+// stand-in for it at the vLLM box above, so this step only runs when a real Jev
+// deployment is configured.
+const JEV_API_ENDPOINT = process.env.JEV_API_ENDPOINT;
 
 const credentials = new MemoryCredentialStore();
 await credentials.set("openai", VLLM_API_KEY);
@@ -113,7 +115,12 @@ async function testFanout() {
 }
 
 async function testJevJudging() {
-  console.log(`\nTesting Jev judging (${JEV_MODEL} @ ${JEV_API_ENDPOINT})...`);
+  if (!JEV_API_ENDPOINT) {
+    console.log("\nSkipping Jev judging test: JEV_API_ENDPOINT is not set (no real Jev deployment configured).");
+    return;
+  }
+
+  console.log(`\nTesting Jev judging (${JEV_API_ENDPOINT})...`);
 
   const requestId = crypto.randomUUID();
   const downstreamRequest = {
@@ -161,7 +168,6 @@ async function testJevJudging() {
 
   const result = await callJevJudge(jevRequest, {
     endpoint: JEV_API_ENDPOINT,
-    model: JEV_MODEL,
     apiKey: process.env.JEV_API_KEY,
   });
 

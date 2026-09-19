@@ -21,7 +21,7 @@ import {
   type V1ResponsesResponse,
   type V1Usage,
   type V1Winner,
-} from "../src/v1/contracts.js";
+} from "../src/contracts.js";
 import {
   v1Candidate,
   v1ChatCandidate,
@@ -38,7 +38,7 @@ import {
   v1ResponsesRequest,
   v1ResponsesResponse,
   v1Winner,
-} from "./fixtures/v1-contracts.js";
+} from "./fixtures/contracts.js";
 
 describe("v1 endpoint contracts", () => {
   it("defines the supported non-streaming endpoint matrix", () => {

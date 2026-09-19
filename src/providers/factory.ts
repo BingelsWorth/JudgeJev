@@ -3,7 +3,7 @@ import { routeLogicalModel, routeUpstreamModel, type ModelRoute } from "./router
 import { createOpenAIModel, type OpenAIModelOptions } from "./openai.js";
 import { createAnthropicModel, type AnthropicModelOptions } from "./anthropic.js";
 import { createGeminiModel, type GeminiModelOptions } from "./gemini.js";
-import type { CredentialStore } from "../auth/credentials.js";
+import type { CredentialStore } from "../credentials.js";
 
 export interface ProviderConfig {
   provider: ProviderId;

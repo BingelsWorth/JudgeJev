@@ -3,7 +3,7 @@ import { z } from "zod";
 import { buildJevGraph } from "../graph/jev-graph.js";
 import type { WorkerAttempt } from "../graph/state.js";
 import { normalizeModelConfigs, type ModelRoute, type ModelRouteInput } from "../providers/router.js";
-import { callJevJudge } from "../jev/client.js";
+import { callJevJudge } from "../jev-client.js";
 import {
   V1_ENDPOINT_MATRIX,
   GENERIC_CODING_RUBRIC,
@@ -31,7 +31,7 @@ import {
   type V1FinishReasonForProtocol,
   type V1AttemptForEndpoint,
   type V1ModelMetadata,
-} from "../v1/contracts.js";
+} from "../contracts.js";
 
 interface V1ApiBindings {
   OPENAI_API_KEY?: string;
@@ -40,11 +40,9 @@ interface V1ApiBindings {
   OPENAI_BASE_URL?: string;
   ANTHROPIC_BASE_URL?: string;
   GEMINI_BASE_URL?: string;
-  /** Base URL of the (for now, OpenAI-compatible) server prompted to act as the Jev judge. Unset = keep using the local bypass heuristic. */
+  /** Base URL of the actual Jev judging API (a separate typesafe service, not an LLM we prompt). Unset = keep using the local bypass heuristic. */
   JEV_API_ENDPOINT?: string;
   JEV_API_KEY?: string;
-  /** Model name to prompt as the judge at JEV_API_ENDPOINT. Required whenever JEV_API_ENDPOINT is set. */
-  JEV_MODEL?: string;
   /** "fallback" (default) silently falls back to the local heuristic if the Jev call fails; "error" surfaces a judge_error instead, useful while testing that Jev is actually being exercised. */
   JEV_ON_FAILURE?: string;
 }
@@ -392,14 +390,6 @@ async function runJevJudge<E extends V1Endpoint>(
 
   if (candidates.length === 0) return { called: false };
 
-  if (!env.JEV_MODEL) {
-    return {
-      called: true,
-      ok: false,
-      error: { code: "judge_error", message: "JEV_API_ENDPOINT is configured but JEV_MODEL is not set", status: 500 },
-    };
-  }
-
   const jevRequest: V1JevRequest<E> = {
     requestId: request.requestId,
     endpoint,
@@ -411,7 +401,6 @@ async function runJevJudge<E extends V1Endpoint>(
 
   const outcome = await callJevJudge(jevRequest, {
     endpoint: env.JEV_API_ENDPOINT,
-    model: env.JEV_MODEL,
     apiKey: env.JEV_API_KEY,
     // Keep this well inside a Worker's request budget: one retry, short backoff.
     retry: { maxAttempts: 2, baseDelayMs: 250, maxDelayMs: 1000 },

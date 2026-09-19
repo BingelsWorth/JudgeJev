@@ -7,7 +7,7 @@
 
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { JevStateAnnotation, type JevState, type WorkerAttempt } from "./state.js";
-import { buildJudgeDecision, judgeCandidates } from "../judge/judge.js";
+import { buildJudgeDecision, judgeCandidates } from "../judge.js";
 import { resolveRoutesForState, routeLogicalModel, routeUpstreamModel, type ModelRoute } from "../providers/router.js";
 import type { JevModel } from "../providers/types.js";
 

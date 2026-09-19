@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { createV1Router } from "../src/api/v1.js";
+import { createV1Router } from "../src/api/proxy.js";
 
 /**
  * Full v1 plumbing, no mocked graph or provider layer: a real request runs
  * through the proxy -> concurrent provider fan-out -> Jev judging call,
  * against a fake global fetch standing in for both the provider box and the
- * (for now, LLM-as-judge) Jev endpoint. This is the only test that exercises
- * the real wiring between those pieces rather than a mocked graph.
+ * separate, typesafe Jev judging endpoint. This is the only test that
+ * exercises the real wiring between those pieces rather than a mocked graph.
  */
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -25,25 +25,14 @@ function openAIChatCompletion(model: string, content: string) {
   };
 }
 
-/** callJevJudge requests `stream: true` - the Jev endpoint mock must actually speak SSE. */
-function jevVerdictStream(winnerCandidateId: string, notes: string[] = []): Response {
-  const encoder = new TextEncoder();
-  const content = JSON.stringify({ winnerCandidateId, notes });
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`));
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+function jevVerdict(winnerCandidateId: string, notes: string[] = []) {
+  return { winnerCandidateId, notes };
 }
 
 const env = {
   OPENAI_API_KEY: "test-key",
   OPENAI_BASE_URL: "https://fake-openai.test/v1",
-  JEV_API_ENDPOINT: "https://fake-jev.test/v1",
-  JEV_MODEL: "judge-model",
+  JEV_API_ENDPOINT: "https://fake-jev.test/judge",
 };
 
 function createApp() {
@@ -74,7 +63,7 @@ describe("v1 end-to-end plumbing", () => {
         // longer). Have Jev deliberately pick worker-0 (the shorter one) instead, so this
         // test actually proves Jev's own decision - not the bypass - drives the response,
         // rather than the two coincidentally agreeing.
-        return jevVerdictStream("worker-0", ["candidate A was more direct and equally correct"]);
+        return jsonResponse(jevVerdict("worker-0", ["candidate A was more direct and equally correct"]));
       }
 
       throw new Error(`unexpected fetch to ${url}`);
@@ -114,9 +103,12 @@ describe("v1 end-to-end plumbing", () => {
     expect(providerCallIndexes).toHaveLength(2);
     expect(jevCallIndex).toBeGreaterThan(Math.max(...providerCallIndexes));
 
-    // Prove the Jev call itself is really the streamed judge contract, not a plain request.
+    // Prove the Jev call itself carries the full type-safe V1JevRequest payload
+    // (both candidates + the rubric), not just a lightweight prompt.
     const jevInit = fetchImpl.mock.calls[jevCallIndex][1] as RequestInit;
-    expect(JSON.parse(String(jevInit.body)).stream).toBe(true);
+    const jevRequest = JSON.parse(String(jevInit.body));
+    expect(jevRequest.candidates).toHaveLength(2);
+    expect(jevRequest.rubric.id).toBe("generic-coding-quality-v1");
   });
 
   it("still calls Jev with the surviving candidate when one provider attempt fails", async () => {
@@ -132,7 +124,7 @@ describe("v1 end-to-end plumbing", () => {
         return jsonResponse(openAIChatCompletion(body.model, "candidate B: the only survivor"));
       }
       if (url.startsWith("https://fake-jev.test/")) {
-        return jevVerdictStream("worker-1");
+        return jsonResponse(jevVerdict("worker-1"));
       }
       throw new Error(`unexpected fetch to ${url}`);
     });

@@ -4,8 +4,8 @@
 import { describe, it, expect } from "vitest";
 import { buildJevGraph } from "../src/graph/jev-graph.js";
 import app from "../src/index.js";
-import { MemoryRunRepository } from "../src/runs/repository.js";
-import { judgeCandidates } from "../src/judge/judge.js";
+import { MemoryRunRepository } from "../src/run-repository.js";
+import { judgeCandidates } from "../src/judge.js";
 import type { WorkerAttempt } from "../src/graph/state.js";
 import { resolveRoutesForState, routeLogicalModel, routeUpstreamModel, type ModelRoute } from "../src/providers/router.js";
 import type { JevModel } from "../src/providers/types.js";

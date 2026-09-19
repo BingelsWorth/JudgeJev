@@ -1,4 +1,4 @@
-import type { V1AttemptErrorCode } from "../v1/contracts.js";
+import type { V1AttemptErrorCode } from "../contracts.js";
 
 export type ProviderId = "openai" | "anthropic" | "gemini";
 

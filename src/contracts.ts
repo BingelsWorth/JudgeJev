@@ -1,4 +1,4 @@
-import type { ProviderId } from "../providers/types.js";
+import type { ProviderId } from "./providers/types.js";
 
 export type V1ProviderId = ProviderId;
 

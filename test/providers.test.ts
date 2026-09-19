@@ -31,13 +31,13 @@ import {
   normalizeFinishReason,
   normalizeUsage,
 } from "../src/providers/normalize.js";
-import { GENERIC_CODING_RUBRIC } from "../src/v1/contracts.js";
+import { GENERIC_CODING_RUBRIC } from "../src/contracts.js";
 import type {
   ProviderCompletion,
   ProviderCompletionError,
   V1CompletionRequest,
 } from "../src/providers/types.js";
-import type { V1Endpoint, V1ModelMetadata } from "../src/v1/contracts.js";
+import type { V1Endpoint, V1ModelMetadata } from "../src/contracts.js";
 
 function mockFetch(responseJson: unknown, status = 200): typeof fetch {
   return vi.fn(async (_input: RequestInfo, _init?: RequestInit) =>

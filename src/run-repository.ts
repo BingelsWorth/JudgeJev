@@ -6,7 +6,7 @@
  * later.
  */
 
-import type { JevRunState } from "../graph/state.js";
+import type { JevRunState } from "./graph/state.js";
 
 export interface StoredRun {
   id: string;

@@ -1,4 +1,4 @@
-import type { WorkerAttempt } from "../graph/state.js";
+import type { WorkerAttempt } from "./graph/state.js";
 
 export interface JudgeDecision {
   winner: WorkerAttempt | null;

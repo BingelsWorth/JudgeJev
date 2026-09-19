@@ -12,7 +12,7 @@ import type {
   V1ResponsesRequest,
   V1ResponsesResponse,
   V1Winner,
-} from "../../src/v1/contracts.js";
+} from "../../src/contracts.js";
 
 export const v1ResponsesRequest = {
   requestId: "run-123",

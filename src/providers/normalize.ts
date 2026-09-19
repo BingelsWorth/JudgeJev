@@ -1,4 +1,4 @@
-import type { V1AttemptErrorCode, V1Candidate, V1Endpoint, V1FailedAttemptForEndpoint, V1FinishReasonForProtocol, V1ModelMetadata, V1ProtocolForEndpoint, V1Usage } from "../v1/contracts.js";
+import type { V1AttemptErrorCode, V1Candidate, V1Endpoint, V1FailedAttemptForEndpoint, V1FinishReasonForProtocol, V1ModelMetadata, V1ProtocolForEndpoint, V1Usage } from "../contracts.js";
 import type { ProviderCompletion, ProviderCompletionError } from "./types.js";
 import { toProviderCompletionError } from "./errors.js";
 
