@@ -12,7 +12,7 @@ A client sends one normal OpenAI/Anthropic-shaped request to JudgeJev. JudgeJev 
 | POST | `/v1/responses` | OpenAI Responses API |
 | POST | `/v1/chat/completions` | OpenAI Chat Completions API |
 | POST | `/v1/messages` | Anthropic Messages API |
-| POST | `/runs`, GET `/runs`, GET/DELETE `/runs/:id`, POST `/runs/:id/judge` | Internal run-state API (not protocol-shaped; mainly for debugging/inspection) |
+| POST | `/runs`, GET `/runs`, GET/DELETE `/runs/:id`, POST `/runs/:id/judge` | Internal run-state API (not protocol-shaped; mainly for debugging/inspection). In-memory only - doesn't survive a restart or a request landing on a different isolate. |
 
 All three `/v1/*` endpoints are non-streaming (`stream: false` only) and accept the same request body as the corresponding upstream API, plus two optional JudgeJev-specific fields:
 
@@ -49,7 +49,7 @@ JudgeJev is an LLM fan-out proxy: it fans one request out to every configured pr
 - `JEV_MODEL`: which Jev version to use (`jev-latest`, `jev-preview`, or a pinned version). Defaults to `jev-latest`.
 - `JEV_ON_FAILURE`: if the Jev call itself fails (network error, undecodable verdict, etc.), `fallback` (default) silently serves the local heuristic's winner; `error` returns a `judge_error` instead. Use `error` while testing Jev integration so a broken call can't be masked by the fallback.
 
-See [`env.template`](env.template) for the full list of environment variables (`MODEL_CONFIGS`, D1 binding, Jev config).
+See [`env.template`](env.template) for the full list of environment variables (`MODEL_CONFIGS`, Jev config).
 
 ## Local development
 

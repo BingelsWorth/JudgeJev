@@ -29,20 +29,6 @@ build:
 deploy:
     wrangler deploy
 
-# Create the D1 database (local dev)
-db-create:
-    wrangler d1 create judge-jev
-
-# Run a SQL statement against the local D1 database
-# Usage: just db-execute "SELECT * FROM runs;"
-db-execute statement:
-    wrangler d1 execute judge-jev --command="{{statement}}"
-
-# Run a SQL statement from a file against the local D1 database
-# Usage: just db-execute-file path/to/migration.sql
-db-execute-file file:
-    wrangler d1 execute judge-jev --file="{{file}}"
-
 # Print current wrangler environment info
 status:
     wrangler info

@@ -13,7 +13,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { buildJevGraph } from "./graph/jev-graph.js";
-import { D1RunRepository, MemoryRunRepository, type RunRepository } from "./run-repository.js";
+import { MemoryRunRepository, type RunRepository } from "./run-repository.js";
 import { buildModel, configFromRoute } from "./providers/factory.js";
 import { MemoryCredentialStore } from "./credentials.js";
 import { defaultModelRoutes, modelNamesForRoutes, normalizeModelRoute, parseModelConfigsEnv, type ModelRoute, type ModelRouteInput } from "./providers/router.js";
@@ -22,11 +22,17 @@ import type { ProviderId } from "./providers/types.js";
 import { createV1Router } from "./api/proxy.js";
 
 type Bindings = {
-  JUDGE_JEV_RUNS?: D1Database;
   JEV_API_KEY?: string;
   /** Default route registrations (endpoint + token + fan-out dict per entry), same JSON array shape as the request body's `modelConfigs`. Used when a request doesn't supply its own. */
   MODEL_CONFIGS?: string;
 };
+
+/**
+ * In-memory only, shared for the isolate's lifetime - `/runs` state does not
+ * survive across isolates or restarts. It's a debug/inspection API; the real
+ * product surface (`/v1/*`) is stateless and never touches this.
+ */
+const runRepository = new MemoryRunRepository();
 
 interface RunBody {
   request?: string;
@@ -62,8 +68,8 @@ app.get("/health", (c) => {
   return c.json({ status: "ok", service: "judge-jev", version: "0.2.0" });
 });
 
-function getRepo(c: { env: Bindings }): RunRepository {
-  return c.env.JUDGE_JEV_RUNS ? new D1RunRepository(c.env.JUDGE_JEV_RUNS) : new MemoryRunRepository();
+function getRepo(): RunRepository {
+  return runRepository;
 }
 
 function isProviderId(value: string): value is ProviderId {
@@ -106,7 +112,7 @@ app.post("/runs", async (c) => {
   }
 
   const { models, modelConfigs } = normalizeRunBody(body, c.env);
-  const repo = getRepo(c);
+  const repo = getRepo();
   const initialState: JevRunState = {
     request: body.request,
     models,
@@ -123,27 +129,27 @@ app.post("/runs", async (c) => {
 });
 
 app.get("/runs", async (c) => {
-  const repo = getRepo(c);
+  const repo = getRepo();
   const limit = Number(c.req.query("limit") ?? "50");
   const runs = await repo.list(Number.isNaN(limit) ? 50 : limit);
   return c.json({ runs: runs.map((r) => ({ id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt })) });
 });
 
 app.get("/runs/:id", async (c) => {
-  const repo = getRepo(c);
+  const repo = getRepo();
   const run = await repo.get(c.req.param("id"));
   if (!run) return c.json({ error: "run not found" }, 400);
   return c.json({ id: run.id, state: run.state, createdAt: run.createdAt, updatedAt: run.updatedAt });
 });
 
 app.delete("/runs/:id", async (c) => {
-  const repo = getRepo(c);
+  const repo = getRepo();
   const deleted = await repo.delete(c.req.param("id"));
   return c.json({ deleted });
 });
 
 app.post("/runs/:id/judge", async (c) => {
-  const repo = getRepo(c);
+  const repo = getRepo();
   const run = await repo.get(c.req.param("id"));
   if (!run) return c.json({ error: "run not found" }, 404);
 

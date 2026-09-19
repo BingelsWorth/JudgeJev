@@ -1,9 +1,10 @@
 /**
  * BYOT (Bring Your Own Token) credential handling.
  *
- * Credentials are stored in the D1 `credentials` table and encrypted at rest
- * using a per-credential key derived from the credential id and a worker
- * secret. For the initial implementation we use a simple AES-GCM scheme.
+ * `MemoryCredentialStore` is the only implementation: in-memory, per-isolate,
+ * not persisted. Routes normally carry their own `apiKey` (see
+ * `providers/router.ts`'s `ModelRoute`); this only matters as the fallback
+ * `buildModel()` checks when a route doesn't set one.
  */
 
 export interface Credentials {
