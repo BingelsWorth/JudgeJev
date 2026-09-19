@@ -3,10 +3,10 @@ import { z } from "zod";
 import { buildJevGraph } from "../graph/jev-graph.js";
 import type { WorkerAttempt } from "../graph/state.js";
 import { defaultModelRoutes, normalizeModelConfigs, parseModelConfigsEnv, type ModelRoute, type ModelRouteInput } from "../providers/router.js";
-import { callJevJudge } from "../jev-client.js";
+import { callJevJudge, selectRubric } from "../jev-client.js";
+import { getRubric, listRubrics } from "../rubrics.js";
 import {
   V1_ENDPOINT_MATRIX,
-  GENERIC_CODING_RUBRIC,
   parseV1EndpointPath,
   type V1Endpoint,
   type V1DownstreamRequest,
@@ -359,11 +359,35 @@ type JevJudgeOutcome =
   | { called: true; ok: true; response: V1DownstreamResponse }
   | { called: true; ok: false; error: V1Error };
 
+/** Keeps every Jev call well inside a Worker's request budget: one retry, short backoff. */
+function jevClientOptions(env: V1ApiBindings) {
+  return {
+    endpoint: env.JEV_API_ENDPOINT,
+    apiKey: env.JEV_API_KEY,
+    model: env.JEV_MODEL,
+    retry: { maxAttempts: 2, baseDelayMs: 250, maxDelayMs: 1000 },
+  };
+}
+
+/**
+ * Has Jev pick which rubric fits the request, so it's ready before candidates
+ * are - call this alongside the fan-out, not after it. Falls back to the
+ * default rubric on any failure or when Jev isn't configured; a bad rubric
+ * pick is never worth failing the whole request over.
+ */
+async function selectRubricForRequest(env: V1ApiBindings, request: V1DownstreamRequest) {
+  if (!env.JEV_API_KEY) return getRubric(undefined);
+
+  const outcome = await selectRubric(request, listRubrics(), jevClientOptions(env));
+  return getRubric(outcome.ok ? outcome.rubricId : undefined);
+}
+
 async function runJevJudge<E extends V1Endpoint>(
   env: V1ApiBindings,
   workers: WorkerAttempt[],
   endpoint: E,
   request: V1DownstreamRequest,
+  rubric: ReturnType<typeof getRubric>,
 ): Promise<JevJudgeOutcome> {
   // Jev's endpoint is fixed and public (https://docs.typesafe.ai) - there's nothing to
   // point it at. Whether Jev actually judges is gated on having an API key, not an endpoint.
@@ -383,16 +407,10 @@ async function runJevJudge<E extends V1Endpoint>(
     request: request as V1JevRequest<E>["request"],
     attempts,
     candidates,
-    rubric: GENERIC_CODING_RUBRIC,
+    rubric,
   };
 
-  const outcome = await callJevJudge(jevRequest, {
-    endpoint: env.JEV_API_ENDPOINT,
-    apiKey: env.JEV_API_KEY,
-    model: env.JEV_MODEL,
-    // Keep this well inside a Worker's request budget: one retry, short backoff.
-    retry: { maxAttempts: 2, baseDelayMs: 250, maxDelayMs: 1000 },
-  });
+  const outcome = await callJevJudge(jevRequest, jevClientOptions(env));
 
   if (!outcome.ok) return { called: true, ok: false, error: outcome.error };
 
@@ -468,6 +486,10 @@ async function handleV1Request(
       ? modelConfigs
       : defaultModelRoutes([validatedRequest.model]);
 
+    // Kick off rubric selection alongside the fan-out (not after it) so it's
+    // already resolved by the time there are candidates to judge.
+    const rubricPromise = selectRubricForRequest(env, validatedRequest);
+
     const result = await graph.invoke({
       request: JSON.stringify(validatedRequest),
       models: [validatedRequest.model],
@@ -481,7 +503,8 @@ async function handleV1Request(
 
     const winner = result.winner;
 
-    const jevOutcome = await runJevJudge(env, result.workers ?? [], endpoint, validatedRequest);
+    const rubric = await rubricPromise;
+    const jevOutcome = await runJevJudge(env, result.workers ?? [], endpoint, validatedRequest, rubric);
     if (jevOutcome.called) {
       if (jevOutcome.ok) {
         return c.json(jevOutcome.response);

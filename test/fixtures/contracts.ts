@@ -181,8 +181,9 @@ export const v1JevRequest: V1JevRequest<"responses"> = {
   attempts: [v1Candidate, v1FailedAttempt],
   candidates: [v1Candidate],
   rubric: {
-    id: "generic-coding-quality-v1",
+    id: "coding-v1",
     version: 1,
+    description: "For requests to write, fix, explain, or review code.",
     instruction: "Compare the candidates and select the single best overall answer to the coding request.",
     questions: [
       {

@@ -349,52 +349,25 @@ export type V1AttemptForEndpoint<E extends V1Endpoint> =
 
 export type V1Candidate<E extends V1Endpoint = V1Endpoint> = V1CandidateForEndpoint<E>;
 
-export type V1JevQuestionId =
-  | "correctness"
-  | "completeness"
-  | "clarity"
-  | "safety"
-  | "efficiency";
-
 export interface V1JevQuestion {
-  id: V1JevQuestionId;
+  id: string;
   prompt: string;
 }
 
-export interface V1GenericCodingRubric {
-  id: "generic-coding-quality-v1";
-  version: 1;
+/**
+ * A judging rubric's wire shape. Not tied to any one domain (coding, writing,
+ * etc.) - actual rubric instances live in `src/rubrics.ts`, a pluggable
+ * registry meant to be iterated on and selected between per request, not a
+ * fixed contract like the rest of this file.
+ */
+export interface V1Rubric {
+  id: string;
+  version: number;
+  /** Short blurb of what this rubric is for - shown to Jev when picking which rubric fits a request. */
+  description: string;
   instruction: string;
   questions: readonly V1JevQuestion[];
 }
-
-export const GENERIC_CODING_RUBRIC: V1GenericCodingRubric = {
-  id: "generic-coding-quality-v1",
-  version: 1,
-  instruction: "Compare the candidates and select the single best overall answer to the coding request.",
-  questions: [
-    {
-      id: "correctness",
-      prompt: "Does the response correctly solve the requested coding task?",
-    },
-    {
-      id: "completeness",
-      prompt: "Does the response address all stated requirements and relevant edge cases?",
-    },
-    {
-      id: "clarity",
-      prompt: "Is the response clear, actionable, and easy to understand?",
-    },
-    {
-      id: "safety",
-      prompt: "Does the response avoid unsafe, misleading, or harmful guidance?",
-    },
-    {
-      id: "efficiency",
-      prompt: "Is the proposed approach appropriately efficient and maintainable?",
-    },
-  ],
-};
 
 export interface V1JevRequestForEndpoint<E extends V1Endpoint> {
   requestId: string;
@@ -402,7 +375,7 @@ export interface V1JevRequestForEndpoint<E extends V1Endpoint> {
   request: V1EndpointRequest<E>;
   attempts: readonly V1AttemptForEndpoint<E>[];
   candidates: readonly V1CandidateForEndpoint<E>[];
-  rubric: V1GenericCodingRubric;
+  rubric: V1Rubric;
 }
 
 export type V1JevRequest<E extends V1Endpoint = V1Endpoint> = V1JevRequestForEndpoint<E>;

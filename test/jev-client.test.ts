@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { callJevJudge } from "../src/jev-client.js";
+import { callJevJudge, selectRubric } from "../src/jev-client.js";
 import type { RetryOptions } from "../src/providers/errors.js";
 import { v1JevRequest } from "./fixtures/contracts.js";
+import { RUBRICS, listRubrics } from "../src/rubrics.js";
 
 function typesafeResponse(choice: string, extra: Record<string, unknown> = {}) {
   return {
@@ -178,5 +179,82 @@ describe("callJevJudge", () => {
 
     expect(result.ok).toBe(false);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+function typesafeRubricResponse(rubricId: string) {
+  return {
+    model: "jev-1.13.0",
+    answers: { rubric: { type: "choice", choice: rubricId, confidence: 0.81 } },
+    usage: { input_tokens: 40, output_tokens: 6 },
+  };
+}
+
+describe("selectRubric", () => {
+  const request = v1JevRequest.request;
+  const rubrics = listRubrics();
+
+  it("posts every rubric as a choice option, keyed by id, and returns the one Jev picks", async () => {
+    const fetchImpl = mockFetch(200, typesafeRubricResponse("coding-v1"));
+
+    const result = await selectRubric(request, rubrics, { apiKey: "jev-key", retry: noRetry, fetch: fetchImpl });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.rubricId).toBe("coding-v1");
+    expect(result.confidence).toBe(0.81);
+
+    const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("https://api.typesafe.ai/v1/systemone");
+    const body = JSON.parse(init.body);
+    expect(body.questions.rubric.type).toBe("choice");
+    expect(body.questions.rubric.criteria).toEqual(
+      Object.fromEntries(rubrics.map((r) => [r.id, r.description])),
+    );
+    expect(body.state.request).toEqual(request);
+  });
+
+  it("rejects a rubric choice that was not among the offered rubrics", async () => {
+    const fetchImpl = mockFetch(200, typesafeRubricResponse("not-a-real-rubric"));
+
+    const result = await selectRubric(request, rubrics, { retry: noRetry, fetch: fetchImpl });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected error result");
+    expect(result.error.code).toBe("judge_error");
+  });
+
+  it("rejects a response with no rubric answer", async () => {
+    const fetchImpl = mockFetch(200, { model: "jev-1.13.0", answers: {}, usage: {} });
+
+    const result = await selectRubric(request, rubrics, { retry: noRetry, fetch: fetchImpl });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected error result");
+    expect(result.error.message).toMatch(/decodable rubric choice/);
+  });
+
+  it("rejects before making a request when no rubrics are offered", async () => {
+    const fetchImpl = mockFetch(200, typesafeRubricResponse("coding-v1"));
+
+    const result = await selectRubric(request, [], { retry: noRetry, fetch: fetchImpl });
+
+    expect(result.ok).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("maps a non-2xx endpoint error to a judge_error", async () => {
+    const fetchImpl = mockFetch(500, { detail: "overloaded" });
+
+    const result = await selectRubric(request, rubrics, { retry: noRetry, fetch: fetchImpl });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected error result");
+    expect(result.error.code).toBe("judge_error");
+    expect(result.error.status).toBe(502);
+  });
+
+  it("offers the real rubric registry by default", () => {
+    expect(rubrics.map((r) => r.id)).toEqual(Object.keys(RUBRICS));
   });
 });

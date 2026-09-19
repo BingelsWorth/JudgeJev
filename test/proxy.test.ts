@@ -371,6 +371,15 @@ describe("v1 API endpoints", () => {
       return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
+    function jevRubricResponse(rubricId: string): Response {
+      const body = {
+        model: "jev-1.13.0",
+        answers: { rubric: { type: "choice", choice: rubricId, confidence: 0.9 } },
+        usage: { input_tokens: 50, output_tokens: 6 },
+      };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
     afterEach(() => {
       vi.unstubAllGlobals();
     });
@@ -461,6 +470,65 @@ describe("v1 API endpoints", () => {
       expect(fetchSpy).not.toHaveBeenCalled();
       const json: any = await res.json();
       expect(json.choices[0].message.content).toBe("a much longer, more thorough answer");
+    });
+
+    it("uses the rubric Jev selects for the judging call's instructions", async () => {
+      mockInvoke.mockResolvedValue({ winner: workers[1], workers });
+      const fetchImpl = vi.fn(async (_input: RequestInfo, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.questions?.rubric) return jevRubricResponse("coding-v1");
+        return jevJsonResponse("worker-0");
+      });
+      vi.stubGlobal("fetch", fetchImpl);
+
+      const app = createTestApp(jevEnv());
+      await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "test" }] }),
+        },
+        jevEnv(),
+      );
+
+      const judgeCall = fetchImpl.mock.calls.find(([, init]) => JSON.parse(String(init?.body ?? "{}")).questions?.winner);
+      expect(judgeCall).toBeDefined();
+      const judgeBody = JSON.parse(String(judgeCall![1]?.body));
+      expect(judgeBody.questions.winner.instructions).toContain("coding request");
+    });
+
+    it("falls back to the default rubric, without affecting JEV_ON_FAILURE, when rubric selection itself fails", async () => {
+      mockInvoke.mockResolvedValue({ winner: workers[1], workers });
+      const fetchImpl = vi.fn(async (_input: RequestInfo, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.questions?.rubric) return new Response("boom", { status: 500 });
+        return jevJsonResponse("worker-0");
+      });
+      vi.stubGlobal("fetch", fetchImpl);
+
+      const env = jevEnv({ JEV_ON_FAILURE: "error" });
+      const app = createTestApp(env);
+      const res = await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "test" }] }),
+        },
+        env,
+      );
+
+      // Rubric selection failing silently falls back to the default rubric - it never
+      // triggers JEV_ON_FAILURE (that only governs the judging call itself), so the
+      // judging call still goes ahead and its own success still wins.
+      expect(res.status).toBe(200);
+      const json: any = await res.json();
+      expect(json.choices[0].message.content).toBe("short answer");
+
+      const judgeCall = fetchImpl.mock.calls.find(([, init]) => JSON.parse(String(init?.body ?? "{}")).questions?.winner);
+      const judgeBody = JSON.parse(String(judgeCall![1]?.body));
+      expect(judgeBody.questions.winner.instructions).not.toContain("coding request");
     });
   });
 

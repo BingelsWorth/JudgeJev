@@ -42,12 +42,23 @@ When a request doesn't supply its own `modelConfigs`, JudgeJev falls back to the
 
 JudgeJev is an LLM fan-out proxy: it fans one request out to every configured provider/model route, then hands the results to Jev - [TypeSafe's](https://docs.typesafe.ai) decision model, a fixed public API, not an LLM JudgeJev prompts itself and not one of the models in its own fan-out list - which decides which candidate wins.
 
-`src/jev-client.ts` adapts the original request, every candidate, and the generic coding-quality rubric into a single TypeSafe [`choice`](https://docs.typesafe.ai/primitives/choice) question (`POST https://api.typesafe.ai/v1/systemone`) - the candidate ids are the options, their content lives in `state`, and the rubric becomes the instructions - then decodes the winning choice back into JudgeJev's response.
+`src/jev-client.ts` adapts the original request, every candidate, and a rubric into a single TypeSafe [`choice`](https://docs.typesafe.ai/primitives/choice) question (`POST https://api.typesafe.ai/v1/systemone`) - the candidate ids are the options, their content lives in `state`, and the rubric becomes the instructions - then decodes the winning choice back into JudgeJev's response.
 
 - `JEV_API_KEY` unset (default): skip Jev entirely and serve the longest-candidate local heuristic. This is the dev-time bypass - useful before you have a Jev key.
-- `JEV_API_KEY` set: after the fan-out barrier, ask Jev to choose and return its chosen candidate unchanged. There's no endpoint to configure - it's fixed and public.
+- `JEV_API_KEY` set: ask Jev to choose and return its chosen candidate unchanged. There's no endpoint to configure - it's fixed and public.
 - `JEV_MODEL`: which Jev version to use (`jev-latest`, `jev-preview`, or a pinned version). Defaults to `jev-latest`.
-- `JEV_ON_FAILURE`: if the Jev call itself fails (network error, undecodable verdict, etc.), `fallback` (default) silently serves the local heuristic's winner; `error` returns a `judge_error` instead. Use `error` while testing Jev integration so a broken call can't be masked by the fallback.
+- `JEV_ON_FAILURE`: if the judging call itself fails (network error, undecodable verdict, etc.), `fallback` (default) silently serves the local heuristic's winner; `error` returns a `judge_error` instead. Use `error` while testing Jev integration so a broken call can't be masked by the fallback.
+
+### Rubrics
+
+The rubric a request is judged against isn't fixed - it's picked per request. `src/rubrics.ts` holds a small, pluggable registry (`RUBRICS`, keyed by id) meant for quick iteration: add, edit, or retire a rubric there without touching any wire contract. Each rubric has a `description` (what it's for, shown to Jev when picking) and a set of `questions` to weigh when comparing candidates.
+
+Two Jev calls happen per request, not one:
+
+1. **Rubric selection**, fired alongside the fan-out (not after it) - Jev is given the original request and every registered rubric's `description`, and picks the best fit. Since this runs concurrently with the provider calls, it's normally already resolved by the time there are candidates to judge, at no added latency.
+2. **Judging**, once candidates are in - the selected rubric's questions become the judge's instructions.
+
+If rubric selection fails or `JEV_API_KEY` is unset, it silently falls back to the default rubric (`general-v1`) - that failure never surfaces as a `judge_error` or interacts with `JEV_ON_FAILURE`, which only governs the judging call itself.
 
 See [`env.template`](env.template) for the full list of environment variables (`MODEL_CONFIGS`, Jev config).
 

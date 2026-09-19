@@ -31,7 +31,6 @@ import {
   normalizeFinishReason,
   normalizeUsage,
 } from "../src/providers/normalize.js";
-import { GENERIC_CODING_RUBRIC } from "../src/contracts.js";
 import type {
   ProviderCompletion,
   ProviderCompletionError,
@@ -850,17 +849,4 @@ describe("Normalize functions", () => {
     });
   });
 
-  describe("GENERIC_CODING_RUBRIC", () => {
-    it("exposes the initial generic coding-quality rubric", () => {
-      expect(GENERIC_CODING_RUBRIC.id).toBe("generic-coding-quality-v1");
-      expect(GENERIC_CODING_RUBRIC.questions).toHaveLength(5);
-      expect(GENERIC_CODING_RUBRIC.questions.map((q) => q.id)).toEqual([
-        "correctness",
-        "completeness",
-        "clarity",
-        "safety",
-        "efficiency",
-      ]);
-    });
-  });
 });

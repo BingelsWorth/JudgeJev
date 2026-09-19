@@ -1,6 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
-  GENERIC_CODING_RUBRIC,
   V1_ENDPOINT_MATRIX,
   getV1EndpointContract,
   parseV1EndpointPath,
@@ -134,36 +133,6 @@ describe("v1 endpoint contracts", () => {
 });
 
 describe("v1 judging contracts", () => {
-  it("defines the generic coding rubric", () => {
-    expect(GENERIC_CODING_RUBRIC).toEqual({
-      id: "generic-coding-quality-v1",
-      version: 1,
-      instruction: "Compare the candidates and select the single best overall answer to the coding request.",
-      questions: [
-        {
-          id: "correctness",
-          prompt: "Does the response correctly solve the requested coding task?",
-        },
-        {
-          id: "completeness",
-          prompt: "Does the response address all stated requirements and relevant edge cases?",
-        },
-        {
-          id: "clarity",
-          prompt: "Is the response clear, actionable, and easy to understand?",
-        },
-        {
-          id: "safety",
-          prompt: "Does the response avoid unsafe, misleading, or harmful guidance?",
-        },
-        {
-          id: "efficiency",
-          prompt: "Is the proposed approach appropriately efficient and maintainable?",
-        },
-      ],
-    });
-  });
-
   it("keeps the original request, attempts, candidates, and winner response correlated", () => {
     expectTypeOf<V1JevRequest<"responses">>().toMatchTypeOf<{
       requestId: string;
