@@ -468,6 +468,50 @@ function mapErrorToV1(error: unknown): V1Error {
   };
 }
 
+function contentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content === null || content === undefined) return "";
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : ""))
+      .filter(Boolean)
+      .join("\n");
+  }
+  return String(content);
+}
+
+/**
+ * The actual conversation a fanned-out model should see, as plain text -
+ * NOT the JSON-encoded request envelope. A single lone user turn (the common
+ * case, including every benchmark/eval-harness request) is passed through
+ * verbatim so the fanned-out models see exactly what a single direct call
+ * would have seen; a system prompt or multi-turn history gets flattened with
+ * role labels since `runWorker` only ever sends one message downstream.
+ */
+function extractPromptText(request: V1DownstreamRequest): string {
+  if (request.endpoint === "chat/completions") {
+    const { messages } = request;
+    if (messages.length === 1 && messages[0].role === "user") return contentToText(messages[0].content);
+    return messages.map((m) => `${m.role}: ${contentToText(m.content)}`).join("\n\n");
+  }
+
+  if (request.endpoint === "messages") {
+    const { messages, system } = request;
+    if (!system && messages.length === 1) return contentToText(messages[0].content);
+    const parts: string[] = [];
+    if (system) parts.push(`system: ${contentToText(system)}`);
+    for (const m of messages) parts.push(`${m.role}: ${contentToText(m.content)}`);
+    return parts.join("\n\n");
+  }
+
+  // responses
+  const { input, instructions } = request;
+  const inputText = typeof input === "string"
+    ? input
+    : input.map((item) => ("content" in item ? `${item.role}: ${contentToText(item.content)}` : "")).filter(Boolean).join("\n\n");
+  return instructions ? `instructions: ${instructions}\n\n${inputText}` : inputText;
+}
+
 async function handleV1Request(
   c: any,
   endpoint: V1Endpoint,
@@ -491,7 +535,7 @@ async function handleV1Request(
     const rubricPromise = selectRubricForRequest(env, validatedRequest);
 
     const result = await graph.invoke({
-      request: JSON.stringify(validatedRequest),
+      request: extractPromptText(validatedRequest),
       models: [validatedRequest.model],
       modelConfigs: routes,
       workers: [],

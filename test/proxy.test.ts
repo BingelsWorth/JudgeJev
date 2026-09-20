@@ -532,6 +532,126 @@ describe("v1 API endpoints", () => {
     });
   });
 
+  describe("Prompt extraction (what fanned-out models actually receive)", () => {
+    // Regression coverage for a real bug: `state.request` was once the JSON-encoded
+    // request envelope (requestId/endpoint/protocol/model/...) instead of the actual
+    // conversation, so every fanned-out model had to see through JSON noise before it
+    // could even find the real question - silently degrading quality and making any
+    // fair single-model-vs-JudgeJev comparison impossible.
+
+    it("passes a single chat/completions user message through verbatim, not the request envelope", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const app = createTestApp(createMockEnv());
+      await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "What is 12 + 30?" }] }),
+        },
+        createMockEnv(),
+      );
+
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.request).toBe("What is 12 + 30?");
+    });
+
+    it("flattens a chat/completions system prompt + user message with role labels", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const app = createTestApp(createMockEnv());
+      await app.request(
+        "/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [
+              { role: "system", content: "You are terse." },
+              { role: "user", content: "What is 12 + 30?" },
+            ],
+          }),
+        },
+        createMockEnv(),
+      );
+
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.request).toBe("system: You are terse.\n\nuser: What is 12 + 30?");
+    });
+
+    it("passes a single messages (Anthropic) user turn through verbatim when there's no system prompt", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const app = createTestApp(createMockEnv());
+      await app.request(
+        "/v1/messages",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "claude-3-sonnet", messages: [{ role: "user", content: "What is 12 + 30?" }] }),
+        },
+        createMockEnv(),
+      );
+
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.request).toBe("What is 12 + 30?");
+    });
+
+    it("includes an Anthropic system prompt with a role label", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const app = createTestApp(createMockEnv());
+      await app.request(
+        "/v1/messages",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-3-sonnet",
+            system: "You are terse.",
+            messages: [{ role: "user", content: "What is 12 + 30?" }],
+          }),
+        },
+        createMockEnv(),
+      );
+
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.request).toBe("system: You are terse.\n\nuser: What is 12 + 30?");
+    });
+
+    it("passes a plain string responses input through verbatim", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const app = createTestApp(createMockEnv());
+      await app.request(
+        "/v1/responses",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", input: "What is 12 + 30?" }),
+        },
+        createMockEnv(),
+      );
+
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.request).toBe("What is 12 + 30?");
+    });
+
+    it("prefixes responses instructions ahead of the input", async () => {
+      mockInvoke.mockResolvedValue({ winner: null });
+      const app = createTestApp(createMockEnv());
+      await app.request(
+        "/v1/responses",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", instructions: "Be terse.", input: "What is 12 + 30?" }),
+        },
+        createMockEnv(),
+      );
+
+      const state = mockInvoke.mock.calls[0][0];
+      expect(state.request).toBe("instructions: Be terse.\n\nWhat is 12 + 30?");
+    });
+  });
+
   describe("Error handling", () => {
     it("returns authentication error for missing API key", async () => {
       mockInvoke.mockRejectedValue(new Error("No API key configured for provider: openai"));

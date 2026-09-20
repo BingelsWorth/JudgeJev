@@ -132,6 +132,13 @@ describe("v1 end-to-end plumbing", () => {
     expect(providerCallIndexes).toHaveLength(2);
     expect(judgeCallIndex).toBeGreaterThan(Math.max(...providerCallIndexes));
 
+    // Each fanned-out model must receive the caller's actual message, not the
+    // JSON-encoded request envelope wrapping it.
+    for (const index of providerCallIndexes) {
+      const providerBody = JSON.parse(String(fetchImpl.mock.calls[index][1]?.body));
+      expect(providerBody.messages).toEqual([{ role: "user", content: "Fix this off-by-one bug." }]);
+    }
+
     // Prove the judge call carries both candidates and the selected rubric as a
     // TypeSafe "choice" question, not just a lightweight prompt.
     const judgeInit = fetchImpl.mock.calls[judgeCallIndex][1] as RequestInit;
