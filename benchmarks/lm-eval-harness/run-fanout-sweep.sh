@@ -81,7 +81,12 @@ for line in lines:
             if isinstance(fanout, dict):
                 for key in list(fanout.keys()):
                     fanout[key] = n
-        out.append(f"MODEL_CONFIGS={json.dumps(configs)}{trailing_newline}")
+        # Compact separators (no spaces) - `.env` gets `source`d as literal
+        # shell via `set -a; source .env`, and an unquoted space in the
+        # value would make bash treat the rest of the line as separate
+        # commands. json.dumps' default separators include a space after
+        # ":" and "," which breaks exactly this way.
+        out.append(f"MODEL_CONFIGS={json.dumps(configs, separators=(',', ':'))}{trailing_newline}")
         changed = True
     else:
         out.append(line)
