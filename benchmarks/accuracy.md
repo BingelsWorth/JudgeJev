@@ -1,6 +1,6 @@
 # Accuracy benchmark: does fan-out + Jev judging actually help?
 
-**Status: single-model baselines collected for `math` (gsm8k) and `coding` (humaneval). Tooling for the "through JudgeJev" run is ready for both. No "through JudgeJev" run has happened yet.** Step one was establishing what the model we're fanning out to scores *on its own*, with no JudgeJev involved - only with that baseline in hand does "does JudgeJev improve on it" become a meaningful question, rather than a number with nothing to compare against.
+**Status: tooling covers `math` (gsm8k, math500), `coding` (humaneval, mbpp), `general` (mmlu), and `translation` (wmt16) - every rubric except `tool-call`, which has no lm-eval-harness task (see "Grading" below). `run-suite.sh` runs all of it, baseline and through-JudgeJev, sequentially.** Step one was establishing what the model we're fanning out to scores *on its own*, with no JudgeJev involved - only with that baseline in hand does "does JudgeJev improve on it" become a meaningful question, rather than a number with nothing to compare against.
 
 ## Tooling
 
@@ -33,11 +33,11 @@ Full 164-problem set, seed `1234`, run against the model's **raw `/v1/completion
 | --- | --- |
 | `pass@1` | 0.421 ± 0.039 |
 
-Captured at `temperature=0` (greedy decoding) - `run-humaneval.sh`'s default has since changed to `0.7` (see "Why this benchmark exists" below for why that matters for the through-JudgeJev comparison specifically); re-run this baseline at the new default before comparing against a fresh `judgejev` run.
+Captured at `temperature=0` (greedy decoding, `run-humaneval.sh`'s default). See "Why this benchmark exists" below for why that default matters for the through-JudgeJev comparison specifically - the fan-out side needs `--temp` set to something non-zero to have anything real to judge between, and the baseline needs the same `--temp` for a fair comparison.
 
 **Why raw completions, not chat**: every code-gen task lm-eval-harness ships in an "instruct"/chat-shaped variant (`humaneval_instruct`, `mbpp_instruct`) assumes the backend can pre-fill the assistant's turn, so the model's generation continues an already-open code fence and its own first ` ``` ` is the *closing* one. Plain OpenAI-compatible chat completions - what this model server and JudgeJev both expose - has no such feature, so the model always writes its own fresh opening fence instead, and every one of those tasks' extraction filters then grabs the wrong span (confirmed directly: every instruct variant scored ~0 regardless of actual code quality, on multiple independent attempts). Raw completion mode sidesteps this entirely: the prompt already ends mid-function, so the model just continues writing real code - no chat template, no thinking, and ~10x faster to boot. See `benchmarks/lm-eval-harness/run-humaneval.sh` for the exact command.
 
-This is the number JudgeJev's fan-out+judging pipeline needs to beat (or lose to honestly). Unlike the earlier version of this doc, this comparison is no longer architecturally blocked: JudgeJev's `/v1/completions` route fans a raw prompt out to every configured route's own raw `/v1/completions` API (no chat wrapping, `stop`/`max_tokens` forwarded as given) and lets Jev judge the results as plain text, same as any other endpoint - see `benchmarks/lm-eval-harness/run-humaneval.sh judgejev`.
+This is the number JudgeJev's fan-out+judging pipeline needs to beat (or lose to honestly). Unlike the earlier version of this doc, this comparison is no longer architecturally blocked: JudgeJev's `/v1/completions` route fans a raw prompt out to every configured route's own raw `/v1/completions` API (no chat wrapping, `stop`/`max_tokens` forwarded as given) and lets Jev judge the results as plain text, same as any other endpoint - see `benchmarks/lm-eval-harness/run-humaneval.sh --target judgejev`.
 
 Raw results: `benchmarks/lm-eval-harness/results/baseline-humaneval/`.
 
@@ -61,7 +61,7 @@ JudgeJev's core bet is: firing the same request at multiple (often small, cheap,
 - **Baselines to compare against**:
   - Single call to one of the fanned-out models (picked deterministically, e.g. first by priority) - isolates the value of fan-out+judging over "just ask one model."
   - Single call to a stronger/larger reference model - checks whether fan-out of small models can compete with brute-forcing a bigger one.
-- **Grading**: for domains with checkable answers (`math` via `gsm8k`, `coding` via `humaneval`), lm-evaluation-harness scores objectively - no human or model-based grading needed, and results are comparable to published numbers for the same model/task. `general` and `translation` are open-ended and lm-eval-harness's task suite doesn't score them meaningfully here; those still need blind human or strong-model-as-grader comparison (method TBD - not blocking the objective-task baseline work). `tool-call` has no built-in lm-eval-harness task at all - the standard benchmark for that ([BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html)) is a separate tool, not evaluated here yet.
+- **Grading**: lm-evaluation-harness scores every rubric except `tool-call` objectively now - no human or model-based grading needed, and results are comparable to published numbers for the same model/task: `math` via `gsm8k` and `math500`, `coding` via `humaneval` and `mbpp`, `general` via `mmlu` (broad knowledge, not open-ended quality - a proxy, not a perfect match for the rubric), `translation` via `wmt16` (BLEU/TER/chrF against a reference translation). `tool-call` has no built-in lm-eval-harness task at all - the standard benchmark for that ([BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html)) is a separate tool, not evaluated here.
 - **Metrics**:
   - Win / tie / loss rate of JudgeJev's winner vs. each baseline, per rubric category and overall.
   - Rubric-selection accuracy: chosen rubric id vs. the prompt's known category.
@@ -69,23 +69,23 @@ JudgeJev's core bet is: firing the same request at multiple (often small, cheap,
 
 ## Reproducing
 
-```bash
-# Step 1: single-model baselines (no JudgeJev)
-cd benchmarks/lm-eval-harness
-./run-gsm8k.sh      # gsm8k, chat completions, target=baseline (default)
-./run-humaneval.sh  # humaneval, raw completions, target=baseline (default)
+The whole suite, sequentially, baseline once per temperature + through-JudgeJev 3x per temperature per task:
 
-# Step 2: through JudgeJev - in another terminal, from the repo root:
-npm run dev         # starts JudgeJev at http://localhost:8787
-# then, back in benchmarks/lm-eval-harness:
-./run-gsm8k.sh judgejev
-./run-humaneval.sh judgejev
+```bash
+cd benchmarks/lm-eval-harness
+./run-suite.sh   # everything: humaneval, mbpp, gsm8k, math500, mmlu, wmt16
+
+# in another terminal, from the repo root, before run-suite.sh reaches its judgejev legs:
+npm run dev
 ```
 
-See [`lm-eval-harness/README.md`](lm-eval-harness/README.md) for arguments and defaults. Before trusting a comparison between two runs, confirm both actually received the same question - see that README's note on the prompt-extraction regression coverage.
+To also sweep fan-out size (e.g. 3x vs 5x), use `run-fanout-sweep.sh` instead - it wraps `run-suite.sh` and handles the `.env`/server restart between sizes automatically.
+
+See [`lm-eval-harness/README.md`](lm-eval-harness/README.md) for individual task scripts, flags, and defaults. Before trusting a comparison between two runs, confirm both actually received the same question - see that README's note on the prompt-extraction regression coverage.
 
 ## Open questions before running this
 
-- Who/what grades candidate quality for the open-ended rubrics (`general`, `translation`), and how do we report grader disagreement/uncertainty rather than a single misleadingly-precise number?
+- `mmlu` is a proxy for the `general` rubric (broad knowledge, multiple-choice), not a direct measure of open-ended response quality - is that close enough, or does `general` still need a human/model-graded comparison alongside it?
 - How large does the prompt set need to be per category before a win-rate difference is meaningful rather than noise?
 - Should the "stronger reference model" baseline be pinned to a specific model+version so results stay comparable as models change upstream?
+- `tool-call` remains uncovered - worth its own integration with BFCL, or is it out of scope for now?
