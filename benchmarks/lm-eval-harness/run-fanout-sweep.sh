@@ -120,11 +120,15 @@ for n in "${FANOUT_LIST[@]}"; do
   echo "=== Fan-out ${n} ==="
   set_fanout "${n}"
   start_dev_server
+  # --fanout-label labels every judgejev results folder with this size, so
+  # results from different sizes in this sweep never land in (or silently
+  # overwrite) the same folder - always the actual fan-out size, appended
+  # after SUITE_ARGS so it wins over any --fanout-label a caller passed in.
   if [ "${first}" -eq 1 ]; then
-    ./run-suite.sh "${SUITE_ARGS[@]+"${SUITE_ARGS[@]}"}"
+    ./run-suite.sh "${SUITE_ARGS[@]+"${SUITE_ARGS[@]}"}" --fanout-label "${n}"
     first=0
   else
-    ./run-suite.sh --skip-baseline "${SUITE_ARGS[@]+"${SUITE_ARGS[@]}"}"
+    ./run-suite.sh --skip-baseline "${SUITE_ARGS[@]+"${SUITE_ARGS[@]}"}" --fanout-label "${n}"
   fi
   stop_dev_server
 done

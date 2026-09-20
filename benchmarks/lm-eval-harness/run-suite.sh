@@ -40,6 +40,14 @@
 #   ./run-suite.sh --judgejev-runs 5         # override the default 3 repeats
 #   ./run-suite.sh --skip-baseline           # only refresh judgejev runs
 #   ./run-suite.sh --limit 20                # quick smoke test of the whole suite
+#   ./run-suite.sh --fanout-label 3          # see --fanout-label below
+#
+# --fanout-label: only affects judgejev legs (baseline doesn't depend on
+# fan-out size) - appends `-fanout_<label>` to every judgejev results
+# folder name, so results from different MODEL_CONFIGS fan-out counts don't
+# silently overwrite each other under the same folder. Set automatically by
+# run-fanout-sweep.sh; pass it by hand only if you're comparing fan-out
+# sizes manually instead of through that script.
 #
 # Requires JudgeJev running first for the judgejev legs (`npm run dev` from
 # the repo root) - each underlying script warns (but doesn't block) if it
@@ -51,6 +59,7 @@ ONLY=""
 JUDGEJEV_RUNS=3
 SKIP_BASELINE=0
 LIMIT=""
+FANOUT_LABEL=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -58,6 +67,7 @@ while [ $# -gt 0 ]; do
     --judgejev-runs) JUDGEJEV_RUNS="$2"; shift 2 ;;
     --skip-baseline) SKIP_BASELINE=1; shift ;;
     --limit) LIMIT="$2"; shift 2 ;;
+    --fanout-label) FANOUT_LABEL="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -84,12 +94,16 @@ step() {
 sweep_completions_task() {
   local script="$1"; shift
   local fixed_args=("$@")
+  local fanout_args=()
+  if [ -n "${FANOUT_LABEL}" ]; then
+    fanout_args=(--fanout-label "${FANOUT_LABEL}")
+  fi
   for temp in "${COMPLETIONS_TEMPS[@]}"; do
     if [ "${SKIP_BASELINE}" -eq 0 ]; then
       step "${script}" "${fixed_args[@]+"${fixed_args[@]}"}" --temp "${temp}" "${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"}"
     fi
     for i in $(seq 1 "${JUDGEJEV_RUNS}"); do
-      step "${script}" "${fixed_args[@]+"${fixed_args[@]}"}" --target judgejev --temp "${temp}" "${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"}"
+      step "${script}" "${fixed_args[@]+"${fixed_args[@]}"}" --target judgejev --temp "${temp}" "${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"}" "${fanout_args[@]+"${fanout_args[@]}"}"
     done
   done
 }
@@ -106,7 +120,7 @@ run_gsm8k() {
     step ./run-gsm8k.sh baseline gsm8k "${gsm8k_limit}"
   fi
   for i in $(seq 1 "${JUDGEJEV_RUNS}"); do
-    step ./run-gsm8k.sh judgejev gsm8k "${gsm8k_limit}"
+    step ./run-gsm8k.sh judgejev gsm8k "${gsm8k_limit}" "" "${FANOUT_LABEL}"
   done
 }
 

@@ -20,6 +20,7 @@
 #   ./run-humaneval.sh --target judgejev --temp 0.7  # treatment: same temp, 5x fan-out + judge
 #   ./run-humaneval.sh --limit 20
 #   ./run-humaneval.sh --output my-custom-name
+#   ./run-humaneval.sh --target judgejev --fanout-label 3   # see --fanout-label below
 #
 # --target: "baseline" (default) - hits ${MODEL_SERVER_URL}/v1/completions
 #           directly (MODEL_SERVER_URL from the repo-root .env, falls back
@@ -58,6 +59,13 @@
 #
 # --limit: optional - full HumanEval is 164 problems and fast enough (raw
 # completion, no reasoning overhead) to just run in full.
+#
+# --fanout-label: only meaningful for --target judgejev (baseline doesn't
+# depend on fan-out size, so it's ignored there) - appends `-fanout_<label>`
+# to the results folder name so runs at different MODEL_CONFIGS fan-out
+# counts don't silently overwrite each other under the same name. Set
+# automatically by run-fanout-sweep.sh; pass it by hand if you're comparing
+# fan-out sizes manually instead of through that script.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -68,6 +76,7 @@ TARGET="baseline"
 TEMPERATURE="0"
 OUTPUT_NAME=""
 LIMIT=""
+FANOUT_LABEL=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -75,6 +84,7 @@ while [ $# -gt 0 ]; do
     --temp|--temperature) TEMPERATURE="$2"; shift 2 ;;
     --output|--output-name) OUTPUT_NAME="$2"; shift 2 ;;
     --limit) LIMIT="$2"; shift 2 ;;
+    --fanout-label) FANOUT_LABEL="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -106,11 +116,16 @@ esac
 # at different temperatures never land in the same folder unless you
 # explicitly ask for that via --output.
 if [ -n "${OUTPUT_NAME}" ]; then
-  : # explicit --output wins as-is
-elif [ "${TEMPERATURE}" = "0" ]; then
-  OUTPUT_NAME="${DEFAULT_OUTPUT_NAME}"
+  : # explicit --output wins as-is, including no fan-out label
 else
-  OUTPUT_NAME="${DEFAULT_OUTPUT_NAME}-temp_${TEMPERATURE}"
+  if [ "${TEMPERATURE}" = "0" ]; then
+    OUTPUT_NAME="${DEFAULT_OUTPUT_NAME}"
+  else
+    OUTPUT_NAME="${DEFAULT_OUTPUT_NAME}-temp_${TEMPERATURE}"
+  fi
+  if [ "${TARGET}" = "judgejev" ] && [ -n "${FANOUT_LABEL}" ]; then
+    OUTPUT_NAME="${OUTPUT_NAME}-fanout_${FANOUT_LABEL}"
+  fi
 fi
 
 if [ ! -x .venv/bin/lm_eval ]; then

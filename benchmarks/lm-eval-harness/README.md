@@ -53,6 +53,8 @@ Automates the one thing `run-suite.sh` can't: switching `MODEL_CONFIGS`' fan-out
 
 **Your `.env` is always restored to its original contents when this exits** - normally, on error, or on Ctrl-C - and any dev server it started is always stopped first. It's a scratch config for the sweep's duration only; nothing about your working setup persists past it. Verified directly: mutated `MODEL_CONFIGS` to `fanout: 3`, confirmed a real run through the live server produced exactly 3 workers, then confirmed `.env` and the server were both back to their original state after.
 
+**Results are labeled by fan-out size automatically.** Every judgejev results folder gets `-fanout_<N>` appended (e.g. `through-judgejev-humaneval-temp_0.7-fanout_3` vs. `...-fanout_5`) via `--fanout-label`, which this script passes to `run-suite.sh` with the real fan-out size for each pass - so a `--fanouts 3,5` sweep never overwrites the 3x results with the 5x ones. Baseline folders are unaffected (baseline doesn't depend on fan-out size, so it's shared across both). Running `run-suite.sh` directly (not through this script) skips labeling by default - only worth doing by hand if you're comparing fan-out sizes without the sweep script.
+
 Still fully sequential end to end - one fan-out size's entire suite (and its one dev server) finishes before the next size's `.env` edit and restart happen.
 
 ## Running `gsm8k` (math, chat completions) - baseline or through JudgeJev
