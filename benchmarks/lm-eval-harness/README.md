@@ -46,8 +46,14 @@ Same `target` pattern as `gsm8k`:
 ./run-humaneval.sh [target] [output_name] [limit]
 ```
 
-- `target=baseline` (default) - hits `${MODEL_SERVER_URL}/v1/completions` directly (note: `/v1/completions`, not `/v1/chat/completions`; `MODEL_SERVER_URL` from the repo-root `.env`, falls back to `http://192.168.2.106:8000` if unset). No fan-out, no Jev. Other defaults: `baseline-humaneval`, full 164-problem set - matching the committed results.
+- `target=baseline` (default) - hits `${MODEL_SERVER_URL}/v1/completions` directly (note: `/v1/completions`, not `/v1/chat/completions`; `MODEL_SERVER_URL` from the repo-root `.env`, falls back to `http://192.168.2.106:8000` if unset). No fan-out, no Jev. Other defaults: `baseline-humaneval`, full 164-problem set.
 - `target=judgejev` - hits JudgeJev's own `/v1/completions` instead (`http://localhost:8787/v1/completions`, model `fast`). JudgeJev fans the raw prompt out to every configured route's own raw completions API - no chat wrapping - and has Jev judge the results as plain text, same as any other endpoint. Requires JudgeJev running first (`npm run dev` from the repo root; see the `gsm8k` section above for the exact steps).
+
+Defaults to `TEMPERATURE=0.7` for *both* targets (see "Why temperature matters" below) - **this does not match the committed `baseline-humaneval` results**, which were captured at `TEMPERATURE=0` before this default changed. Re-run the baseline too if you want a same-settings comparison against a fresh `judgejev` run.
+
+## Why temperature matters here at all
+
+This is the reason fan-out + judging can improve anything when every candidate comes from the *same* model: at a non-zero temperature, the same model asked the same question twice gives two slightly different answers, some better than others - fan out N times, have Jev grade the variants, and keep the best one. At `temperature=0` (greedy decoding) there's no variance to grade in the first place - a short completion like a HumanEval snippet comes back byte-identical every time (confirmed directly: 5x curl with the same prompt at temperature 0 returned the exact same text), and JudgeJev's own duplicate-pruning step collapses those "candidates" down to 1 before Jev ever gets a choice to make. `gsm8k` didn't need an explicit override for this because its multi-thousand-token reasoning chains pick up enough floating-point drift from batched inference to diverge even at temperature 0; `humaneval`'s short completions don't have enough tokens for that to happen.
 
 ## Why `local-chat-completions` + `think_end_token` for gsm8k
 

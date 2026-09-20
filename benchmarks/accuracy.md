@@ -33,6 +33,8 @@ Full 164-problem set, seed `1234`, run against the model's **raw `/v1/completion
 | --- | --- |
 | `pass@1` | 0.421 ± 0.039 |
 
+Captured at `temperature=0` (greedy decoding) - `run-humaneval.sh`'s default has since changed to `0.7` (see "Why this benchmark exists" below for why that matters for the through-JudgeJev comparison specifically); re-run this baseline at the new default before comparing against a fresh `judgejev` run.
+
 **Why raw completions, not chat**: every code-gen task lm-eval-harness ships in an "instruct"/chat-shaped variant (`humaneval_instruct`, `mbpp_instruct`) assumes the backend can pre-fill the assistant's turn, so the model's generation continues an already-open code fence and its own first ` ``` ` is the *closing* one. Plain OpenAI-compatible chat completions - what this model server and JudgeJev both expose - has no such feature, so the model always writes its own fresh opening fence instead, and every one of those tasks' extraction filters then grabs the wrong span (confirmed directly: every instruct variant scored ~0 regardless of actual code quality, on multiple independent attempts). Raw completion mode sidesteps this entirely: the prompt already ends mid-function, so the model just continues writing real code - no chat template, no thinking, and ~10x faster to boot. See `benchmarks/lm-eval-harness/run-humaneval.sh` for the exact command.
 
 This is the number JudgeJev's fan-out+judging pipeline needs to beat (or lose to honestly). Unlike the earlier version of this doc, this comparison is no longer architecturally blocked: JudgeJev's `/v1/completions` route fans a raw prompt out to every configured route's own raw `/v1/completions` API (no chat wrapping, `stop`/`max_tokens` forwarded as given) and lets Jev judge the results as plain text, same as any other endpoint - see `benchmarks/lm-eval-harness/run-humaneval.sh judgejev`.
@@ -42,6 +44,8 @@ Raw results: `benchmarks/lm-eval-harness/results/baseline-humaneval/`.
 ## Why this benchmark exists
 
 JudgeJev's core bet is: firing the same request at multiple (often small, cheap, occasionally-wrong) models and having Jev pick the best response produces a better outcome than trusting any single model call - including a single call to a larger model. That's a testable claim, not an assumption we should get to keep for free. This benchmark is how we check it, and how anyone else can check it against us.
+
+**This is also why fan-out can improve anything even when every candidate comes from the exact same model.** At a non-zero sampling temperature, asking the same model the same question twice gives two slightly different answers - fire it N times, have Jev grade the variants, keep the best one. At `temperature=0` (greedy decoding) there's no variance to grade in the first place: a short answer comes back byte-identical on every attempt (confirmed directly against the humaneval model - see `lm-eval-harness/run-humaneval.sh`'s comments), and JudgeJev's own duplicate-pruning step collapses those "candidates" down to one before Jev ever gets a real choice to make. This isn't specific to same-model fan-out - it's the whole mechanism by which repeated sampling + judging can beat a single call at all.
 
 ## What we're testing
 

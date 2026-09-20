@@ -16,6 +16,7 @@
 #
 # Usage:
 #   ./run-humaneval.sh [target] [output_name] [limit]
+#   TEMPERATURE=0 ./run-humaneval.sh baseline   # override the default if you want greedy
 #
 # target: "baseline" (default) - hits ${MODEL_SERVER_URL}/v1/completions
 #         directly (MODEL_SERVER_URL from the repo-root .env, falls back to
@@ -23,6 +24,25 @@
 #         "judgejev" - hits JudgeJev's own /v1/completions instead
 #         (http://localhost:8787, model "fast" - requires `npm run dev`
 #         running from the repo root first).
+#
+# TEMPERATURE env var, default 0.7 (a common sampling default, not 0/greedy)
+# - applies to both targets, so baseline and judgejev stay comparable at the
+# same setting. This matters a lot for `judgejev` specifically: fan-out only
+# has something to judge between if the candidates actually differ, and
+# they won't at temperature 0 for a short completion. Confirmed directly -
+# 5x curl with the same prompt at temperature 0 returned byte-identical
+# text every time (JudgeJev's own duplicate-pruning step would then collapse
+# those 5 "candidates" down to 1 before Jev ever gets to pick between
+# anything), while 5x with no temperature field at all (letting the
+# upstream model's own sampling default apply) returned 5 genuinely
+# different approaches. lm-eval-harness's `local-completions` client can't
+# send "no temperature" - its request builder unconditionally does
+# `temperature = gen_kwargs.pop("temperature", 0)` - so without this
+# override every request it sends would force greedy decoding regardless of
+# what JudgeJev or the model would otherwise default to. gsm8k doesn't need
+# this override because its multi-thousand-token reasoning chains have
+# enough floating-point drift in batched inference to diverge even at
+# temperature 0; humaneval's short completions don't.
 #
 # `limit` is optional - full HumanEval is 164 problems and fast enough
 # (raw completion, no reasoning overhead) to just run in full.
@@ -34,6 +54,7 @@ ROOT_ENV="../../.env"
 
 TARGET="${1:-baseline}"
 LIMIT="${3:-}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
 
 case "${TARGET}" in
   baseline)
@@ -75,7 +96,7 @@ HF_ALLOW_CODE_EVAL=1 .venv/bin/lm_eval run \
   --model_args "base_url=${BASE_URL},model=${MODEL},num_concurrent=5,max_retries=3,tokenized_requests=False,tokenizer_backend=None,timeout=180" \
   --tasks humaneval \
   --confirm_run_unsafe_code \
-  --gen_kwargs 'max_gen_toks=1024,until=["\nclass","\ndef","\n#","\nif"]' \
+  --gen_kwargs "max_gen_toks=1024,temperature=${TEMPERATURE},until=[\"\\nclass\",\"\\ndef\",\"\\n#\",\"\\nif\"]" \
   --seed 1234 \
   --output_path "results/${OUTPUT_NAME}" \
   --log_samples \
