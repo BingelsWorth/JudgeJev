@@ -43,6 +43,24 @@ export interface V1CompletionRequest extends ChatRequest {
   endpoint?: string;
 }
 
+/** Raw text continuation - no chat template, no messages. Only meaningful for
+ * providers whose upstream actually exposes a completions-style API
+ * (`completeText` is optional on `JevModel` for exactly this reason). */
+export interface CompletionRequest {
+  model: string;
+  logicalModel?: string;
+  prompt: string;
+  temperature?: number;
+  maxTokens?: number;
+  stop?: string[];
+  signal?: AbortSignal;
+}
+
+export interface CompletionResponse {
+  content: string;
+  usage?: TokenUsage;
+}
+
 export interface ProviderCompletion {
   id?: string;
   content: string;
@@ -73,4 +91,5 @@ export interface JevModel {
   stream(request: ChatRequest): AsyncIterable<ChatChunk>;
   complete(request: ChatRequest): Promise<ChatResponse>;
   completeV1?(request: V1CompletionRequest): Promise<ProviderCompletion>;
+  completeText?(request: CompletionRequest): Promise<CompletionResponse>;
 }

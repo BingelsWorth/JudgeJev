@@ -55,6 +55,7 @@ app.get("/", (c) =>
       "POST /v1/responses",
       "POST /v1/chat/completions",
       "POST /v1/messages",
+      "POST /v1/completions",
       "POST /runs",
       "GET  /runs",
       "GET  /runs/:id",

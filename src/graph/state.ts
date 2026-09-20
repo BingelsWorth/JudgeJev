@@ -15,8 +15,18 @@ export interface WorkerAttempt {
   error?: string;
 }
 
+export interface GenerationParams {
+  temperature?: number;
+  maxTokens?: number;
+  /** Only meaningful in "completion" mode - raw completions have no chat template to stop generation for them. */
+  stop?: string[];
+}
+
 export interface JevRunState {
   request: string;
+  /** "chat" (default) wraps `request` as a single user message; "completion" sends it as a raw text-continuation prompt - see `/v1/completions`. */
+  mode?: "chat" | "completion";
+  genParams?: GenerationParams;
   models: string[];
   modelConfigs: ModelRoute[];
   workers: WorkerAttempt[];
@@ -28,6 +38,8 @@ export interface JevRunState {
 
 export const JevStateAnnotation = Annotation.Root({
   request: Annotation<string>(),
+  mode: Annotation<"chat" | "completion" | undefined>(),
+  genParams: Annotation<GenerationParams | undefined>(),
   models: Annotation<string[]>({
     reducer: (_left: string[], right: string[]) => right,
     default: () => [],

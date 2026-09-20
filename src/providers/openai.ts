@@ -1,4 +1,4 @@
-import type { ChatChunk, ChatRequest, ChatResponse, JevModel, TokenUsage, V1CompletionRequest, ProviderCompletion } from "./types.js";
+import type { ChatChunk, ChatRequest, ChatResponse, CompletionRequest, CompletionResponse, JevModel, TokenUsage, V1CompletionRequest, ProviderCompletion } from "./types.js";
 import { fetchOk, type RetryOptions, toProviderCompletionError } from "./errors.js";
 
 const OPENAI_API_BASE = "https://api.openai.com/v1";
@@ -139,7 +139,41 @@ export function createOpenAIModel(
       const json: unknown = await response.json();
       return parseOpenAIChatCompletion(json, request, modelId);
     },
+
+    async completeText(request: CompletionRequest): Promise<CompletionResponse> {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      const response = await fetchOk(
+        () =>
+          fetch(`${baseUrl}/completions`, {
+            method: "POST",
+            signal: request.signal,
+            headers,
+            body: JSON.stringify({
+              model: request.model,
+              prompt: request.prompt,
+              temperature: request.temperature,
+              max_tokens: request.maxTokens,
+              stop: request.stop,
+              stream: false,
+            }),
+          }),
+        retry,
+      );
+
+      const json: unknown = await response.json();
+      return parseOpenAITextCompletion(json);
+    },
   };
+}
+
+export function parseOpenAITextCompletion(json: unknown): CompletionResponse {
+  if (!isRecord(json)) throw new Error("OpenAI returned an invalid response");
+  const choices = Array.isArray(json.choices) ? json.choices : [];
+  const firstChoice = isRecord(choices[0]) ? choices[0] : undefined;
+  const content = typeof firstChoice?.text === "string" ? firstChoice.text : "";
+  const usage = parseTokenUsage(json.usage);
+  return { content, usage };
 }
 
 export function parseOpenAIChatCompletion(

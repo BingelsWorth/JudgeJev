@@ -9,7 +9,32 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import { JevStateAnnotation, type JevState, type WorkerAttempt } from "./state.js";
 import { buildJudgeDecision, judgeCandidates } from "../judge.js";
 import { resolveRoutesForState, routeLogicalModel, routeUpstreamModel, type ModelRoute } from "../providers/router.js";
+import type { GenerationParams } from "./state.js";
 import type { JevModel } from "../providers/types.js";
+
+/** Raw completions have no chat template, so only providers that implement
+ * `completeText` (currently just OpenAI-compatible ones - vLLM included) can
+ * serve a "completion" mode request; others fail this worker cleanly. */
+async function runCompletion(
+  model: JevModel,
+  upstreamModel: string,
+  logicalModel: string | undefined,
+  prompt: string,
+  genParams: GenerationParams,
+  provider: string,
+) {
+  if (!model.completeText) {
+    throw new Error(`${provider} does not support raw completions (no /v1/completions upstream)`);
+  }
+  return model.completeText({
+    model: upstreamModel,
+    logicalModel,
+    prompt,
+    temperature: genParams.temperature,
+    maxTokens: genParams.maxTokens,
+    stop: genParams.stop,
+  });
+}
 
 export interface JevGraphOptions {
   modelFactory: (route: ModelRoute) => Promise<JevModel>;
@@ -41,11 +66,20 @@ async function runWorker(
 
   try {
     const model = await options.modelFactory(route);
-    const response = await model.complete({
-      model: routeUpstreamModel(route),
-      logicalModel: routeLogicalModel(route) || undefined,
-      messages: [{ role: "user", content: state.request }],
-    });
+    const upstreamModel = routeUpstreamModel(route);
+    const logicalModel = routeLogicalModel(route) || undefined;
+    const genParams = state.genParams ?? {};
+
+    const response =
+      state.mode === "completion"
+        ? await runCompletion(model, upstreamModel, logicalModel, state.request, genParams, route.provider)
+        : await model.complete({
+            model: upstreamModel,
+            logicalModel,
+            messages: [{ role: "user", content: state.request }],
+            temperature: genParams.temperature,
+            maxTokens: genParams.maxTokens,
+          });
 
     return {
       ...worker,

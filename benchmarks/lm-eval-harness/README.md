@@ -13,7 +13,7 @@ uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 ```
 
-(`./run-gsm8k.sh` and `./run-baseline-humaneval.sh` both do this automatically on first run.)
+(`./run-gsm8k.sh` and `./run-humaneval.sh` both do this automatically on first run.)
 
 ## Running `gsm8k` (math, chat completions) - baseline or through JudgeJev
 
@@ -38,15 +38,16 @@ One script, `target` picks which one it hits, so the two runs can't drift apart 
 
 **Before comparing results**, confirm both runs actually asked the model the same question - `benchmarks/lm-eval-harness` has no way to catch a bug on the JudgeJev side that changes what the fanned-out models receive (this exact thing happened once: `state.request` was briefly the JSON-encoded request envelope instead of the real question - see `test/e2e.test.ts`'s "Prompt extraction" regression test and `test/proxy.test.ts`'s prompt-extraction suite for the coverage that now guards against it).
 
-## Running `humaneval` (coding, raw completions - see below for why)
+## Running `humaneval` (coding, raw completions - see below for why) - baseline or through JudgeJev
 
-Baseline only - see "Why raw completions for humaneval" below for why this can't go through JudgeJev the same way `gsm8k` does.
+Same `target` pattern as `gsm8k`:
 
 ```bash
-./run-baseline-humaneval.sh [base_url] [model] [output_name] [limit]
+./run-humaneval.sh [target] [output_name] [limit]
 ```
 
-`base_url` defaults to `${MODEL_SERVER_URL}/v1/completions` (note: `/v1/completions`, not `/v1/chat/completions`), reading `MODEL_SERVER_URL` from the repo-root `.env` (falls back to `http://192.168.2.106:8000` if unset). Other defaults: `Qwen/Qwen3-1.7B`, `baseline-humaneval`, full 164-problem set - matching the committed results.
+- `target=baseline` (default) - hits `${MODEL_SERVER_URL}/v1/completions` directly (note: `/v1/completions`, not `/v1/chat/completions`; `MODEL_SERVER_URL` from the repo-root `.env`, falls back to `http://192.168.2.106:8000` if unset). No fan-out, no Jev. Other defaults: `baseline-humaneval`, full 164-problem set - matching the committed results.
+- `target=judgejev` - hits JudgeJev's own `/v1/completions` instead (`http://localhost:8787/v1/completions`, model `fast`). JudgeJev fans the raw prompt out to every configured route's own raw completions API - no chat wrapping - and has Jev judge the results as plain text, same as any other endpoint. Requires JudgeJev running first (`npm run dev` from the repo root; see the `gsm8k` section above for the exact steps).
 
 ## Why `local-chat-completions` + `think_end_token` for gsm8k
 
@@ -62,7 +63,7 @@ The fix is `--tasks humaneval` (the *base*, non-chat task) against the model's r
 - `until=["\nclass","\ndef","\n#","\nif"]` - the base task's default stop list has 5 entries, but vLLM's OpenAI-compatible server rejects more than 4 stop sequences per request (`local-chat-completions` silently truncates to 4 for you; `local-completions` doesn't, so it needs this override or you'll get a 400).
 - `HF_ALLOW_CODE_EVAL=1` env var - HumanEval scores by executing the model's generated code; this is that benchmark's own documented consent gate (separate from lm-eval-harness's own `--confirm_run_unsafe_code` flag, which is also required).
 
-This also means the coding-through-JudgeJev comparison isn't a solved problem yet: JudgeJev has no raw-completions endpoint to point `local-completions` at (see the open question in `../accuracy.md`).
+JudgeJev exposes the same raw `/v1/completions` shape (see `src/api/proxy.ts`), so `target=judgejev` above points `local-completions` at JudgeJev's proxy instead of the model directly, with `stop`/`max_tokens` forwarded through the fan-out unchanged - no chat-template mismatch to work around on that side either.
 
 ## Results
 

@@ -2,26 +2,35 @@ import type { ProviderId } from "./providers/types.js";
 
 export type V1ProviderId = ProviderId;
 
-export type V1Endpoint = "responses" | "chat/completions" | "messages";
+export type V1Endpoint = "responses" | "chat/completions" | "messages" | "completions";
 
 export type V1Protocol =
   | "openai_responses"
   | "openai_chat_completions"
-  | "anthropic_messages";
+  | "anthropic_messages"
+  | "openai_completions";
 
-export type V1EndpointPath = "/v1/responses" | "/v1/chat/completions" | "/v1/messages";
+export type V1EndpointPath =
+  | "/v1/responses"
+  | "/v1/chat/completions"
+  | "/v1/messages"
+  | "/v1/completions";
 
 export type V1ProtocolForEndpoint<E extends V1Endpoint> = E extends "responses"
   ? "openai_responses"
   : E extends "chat/completions"
     ? "openai_chat_completions"
-    : "anthropic_messages";
+    : E extends "completions"
+      ? "openai_completions"
+      : "anthropic_messages";
 
 export type V1EndpointPathFor<E extends V1Endpoint> = E extends "responses"
   ? "/v1/responses"
   : E extends "chat/completions"
     ? "/v1/chat/completions"
-    : "/v1/messages";
+    : E extends "completions"
+      ? "/v1/completions"
+      : "/v1/messages";
 
 export interface V1DownstreamRequestBase<
   E extends V1Endpoint,
@@ -172,10 +181,29 @@ export interface V1ResponsesRequest
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Raw text continuation - no messages, no chat template, no thinking. Exists
+ * for benchmarks like HumanEval whose task design assumes the backend can
+ * pre-fill generation (see `benchmarks/accuracy.md`'s "why raw completions"
+ * note) - a plain chat-completions endpoint can't serve those correctly.
+ */
+export interface V1CompletionsRequest
+  extends V1DownstreamRequestBase<"completions", "openai_completions"> {
+  endpoint: "completions";
+  protocol: "openai_completions";
+  prompt: string;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  stop?: string[];
+  metadata?: Record<string, unknown>;
+}
+
 export type V1DownstreamRequest =
   | V1ResponsesRequest
   | V1ChatCompletionsRequest
-  | V1MessagesRequest;
+  | V1MessagesRequest
+  | V1CompletionsRequest;
 
 export interface V1Usage {
   inputTokens: number;
@@ -280,33 +308,57 @@ export interface V1MessagesResponse {
   [key: string]: unknown;
 }
 
+export interface V1CompletionChoice {
+  text: string;
+  index: number;
+  finish_reason: V1OpenAIFinishReason | null;
+  [key: string]: unknown;
+}
+
+export interface V1CompletionsResponse {
+  id: string;
+  object: "text_completion";
+  created: number;
+  model: string;
+  choices: V1CompletionChoice[];
+  usage?: V1Usage;
+  [key: string]: unknown;
+}
+
 export type V1DownstreamResponse =
   | V1ResponsesResponse
   | V1ChatCompletionsResponse
-  | V1MessagesResponse;
+  | V1MessagesResponse
+  | V1CompletionsResponse;
 
 export type V1RequestForProtocol<P extends V1Protocol> = P extends "openai_responses"
   ? V1ResponsesRequest
   : P extends "openai_chat_completions"
     ? V1ChatCompletionsRequest
-    : V1MessagesRequest;
+    : P extends "openai_completions"
+      ? V1CompletionsRequest
+      : V1MessagesRequest;
 
 export type V1ResponseForProtocol<P extends V1Protocol> = P extends "openai_responses"
   ? V1ResponsesResponse
   : P extends "openai_chat_completions"
     ? V1ChatCompletionsResponse
-    : V1MessagesResponse;
+    : P extends "openai_completions"
+      ? V1CompletionsResponse
+      : V1MessagesResponse;
 
 export interface V1EndpointRequestMap {
   responses: V1ResponsesRequest;
   "chat/completions": V1ChatCompletionsRequest;
   messages: V1MessagesRequest;
+  completions: V1CompletionsRequest;
 }
 
 export interface V1EndpointResponseMap {
   responses: V1ResponsesResponse;
   "chat/completions": V1ChatCompletionsResponse;
   messages: V1MessagesResponse;
+  completions: V1CompletionsResponse;
 }
 
 export type V1EndpointRequest<E extends V1Endpoint> = V1EndpointRequestMap[E];
@@ -459,13 +511,17 @@ export type V1RequestTypeName<E extends V1Endpoint> = E extends "responses"
   ? "V1ResponsesRequest"
   : E extends "chat/completions"
     ? "V1ChatCompletionsRequest"
-    : "V1MessagesRequest";
+    : E extends "completions"
+      ? "V1CompletionsRequest"
+      : "V1MessagesRequest";
 
 export type V1ResponseTypeName<E extends V1Endpoint> = E extends "responses"
   ? "V1ResponsesResponse"
   : E extends "chat/completions"
     ? "V1ChatCompletionsResponse"
-    : "V1MessagesResponse";
+    : E extends "completions"
+      ? "V1CompletionsResponse"
+      : "V1MessagesResponse";
 
 export interface V1EndpointContract<E extends V1Endpoint> {
   endpoint: E;
@@ -509,6 +565,15 @@ export const V1_ENDPOINT_MATRIX = {
     responseType: "V1MessagesResponse",
     streaming: false,
   },
+  completions: {
+    endpoint: "completions",
+    method: "POST",
+    path: "/v1/completions",
+    protocol: "openai_completions",
+    requestType: "V1CompletionsRequest",
+    responseType: "V1CompletionsResponse",
+    streaming: false,
+  },
 } as const satisfies V1EndpointContractMap;
 
 export type V1EndpointMatrix = typeof V1_ENDPOINT_MATRIX;
@@ -521,6 +586,8 @@ export function parseV1EndpointPath(path: string): V1Endpoint | null {
       return "chat/completions";
     case "/v1/messages":
       return "messages";
+    case "/v1/completions":
+      return "completions";
     default:
       return null;
   }

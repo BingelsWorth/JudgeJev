@@ -234,4 +234,58 @@ describe("v1 end-to-end plumbing", () => {
     const json: any = await res.json();
     expect(json.error.code).toBe("no_viable_candidates");
   });
+
+  it("/v1/completions hits the provider's raw /completions endpoint, not /chat/completions, and forwards stop/max_tokens", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = JSON.parse(String(init?.body ?? "{}"));
+
+      if (url === `${FAKE_OPENAI_ENDPOINT}/completions`) {
+        return jsonResponse({
+          id: "cmpl-1",
+          object: "text_completion",
+          created: 1720000000,
+          model: body.model,
+          choices: [{ text: "    return a + b\n", index: 0, finish_reason: "stop" }],
+          usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+        });
+      }
+
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const app = createApp();
+    const res = await app.request(
+      "/v1/completions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "fast",
+          prompt: "def add(a, b):\n",
+          max_tokens: 128,
+          stop: ["\ndef", "\nclass"],
+          modelConfigs: [
+            { name: "worker-a", provider: "openai", model: "model-a", endpoint: FAKE_OPENAI_ENDPOINT, apiKey: "test-key", fanout: { fast: 1 } },
+          ],
+        }),
+      },
+      { JEV_API_KEY: undefined },
+    );
+
+    expect(res.status).toBe(200);
+    const json: any = await res.json();
+    expect(json.object).toBe("text_completion");
+    expect(json.choices[0].text).toBe("    return a + b\n");
+
+    // Never wrapped into a chat message, and never sent to /chat/completions.
+    expect(fetchImpl.mock.calls.some(([reqUrl]) => String(reqUrl).endsWith("/chat/completions"))).toBe(false);
+    const [, init] = fetchImpl.mock.calls[0];
+    const providerBody = JSON.parse(String(init?.body));
+    expect(providerBody.prompt).toBe("def add(a, b):\n");
+    expect(providerBody.messages).toBeUndefined();
+    expect(providerBody.max_tokens).toBe(128);
+    expect(providerBody.stop).toEqual(["\ndef", "\nclass"]);
+  });
 });

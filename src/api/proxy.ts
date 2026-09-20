@@ -23,10 +23,12 @@ import {
   type V1ResponsesRequest,
   type V1ChatCompletionsRequest,
   type V1MessagesRequest,
+  type V1CompletionsRequest,
   type V1ProtocolForEndpoint,
   type V1ResponsesResponse,
   type V1ChatCompletionsResponse,
   type V1MessagesResponse,
+  type V1CompletionsResponse,
   type V1Usage,
   type V1FinishReasonForProtocol,
   type V1AttemptForEndpoint,
@@ -210,6 +212,37 @@ function validateRequestBody(body: unknown, endpoint: V1Endpoint): V1DownstreamR
       } as V1MessagesRequest;
       break;
     }
+    case "completions": {
+      const schema = z.object({
+        model: z.string(),
+        prompt: z.union([z.string(), z.array(z.string())]),
+        temperature: z.number().optional(),
+        top_p: z.number().optional(),
+        max_tokens: z.number().optional(),
+        stop: z.union([z.string(), z.array(z.string())]).optional(),
+        metadata: z.record(z.unknown()).optional(),
+        stream: z.literal(false).optional(),
+        extensions: z.record(z.unknown()).optional(),
+      });
+      const parsed = schema.parse(body);
+      const prompt = Array.isArray(parsed.prompt) ? parsed.prompt.join("\n\n") : parsed.prompt;
+      const stop = parsed.stop === undefined ? undefined : Array.isArray(parsed.stop) ? parsed.stop : [parsed.stop];
+      validated = {
+        requestId,
+        endpoint: "completions",
+        protocol: "openai_completions",
+        model: parsed.model,
+        stream: false,
+        prompt,
+        temperature: parsed.temperature,
+        top_p: parsed.top_p,
+        max_tokens: parsed.max_tokens,
+        stop,
+        metadata: parsed.metadata,
+        extensions: parsed.extensions,
+      } as V1CompletionsRequest;
+      break;
+    }
     default:
       throw new Error(`Unknown endpoint: ${endpoint}`);
   }
@@ -291,6 +324,23 @@ function buildWinnerResponse<E extends V1Endpoint>(
         model: winner.upstreamModel ?? winner.model,
         stop_reason: "end_turn",
         stop_sequence: null,
+        usage,
+      };
+      return response;
+    }
+    case "completions": {
+      const response: V1CompletionsResponse = {
+        id: `cmpl_${crypto.randomUUID().slice(0, 24)}`,
+        object: "text_completion",
+        created: now,
+        model: winner.upstreamModel ?? winner.model,
+        choices: [
+          {
+            text: winner.content,
+            index: 0,
+            finish_reason: "stop",
+          },
+        ],
         usage,
       };
       return response;
@@ -489,6 +539,8 @@ function contentToText(content: unknown): string {
  * role labels since `runWorker` only ever sends one message downstream.
  */
 function extractPromptText(request: V1DownstreamRequest): string {
+  if (request.endpoint === "completions") return request.prompt;
+
   if (request.endpoint === "chat/completions") {
     const { messages } = request;
     if (messages.length === 1 && messages[0].role === "user") return contentToText(messages[0].content);
@@ -510,6 +562,16 @@ function extractPromptText(request: V1DownstreamRequest): string {
     ? input
     : input.map((item) => ("content" in item ? `${item.role}: ${contentToText(item.content)}` : "")).filter(Boolean).join("\n\n");
   return instructions ? `instructions: ${instructions}\n\n${inputText}` : inputText;
+}
+
+/** The caller's own generation settings, so they actually reach the fanned-out
+ * models instead of being silently dropped in favor of provider defaults. */
+function extractGenParams(request: V1DownstreamRequest): { temperature?: number; maxTokens?: number; stop?: string[] } {
+  return {
+    temperature: request.temperature,
+    maxTokens: request.endpoint === "responses" ? request.max_output_tokens : request.max_tokens,
+    stop: request.endpoint === "completions" ? request.stop : undefined,
+  };
 }
 
 async function handleV1Request(
@@ -536,6 +598,8 @@ async function handleV1Request(
 
     const result = await graph.invoke({
       request: extractPromptText(validatedRequest),
+      mode: endpoint === "completions" ? "completion" : "chat",
+      genParams: extractGenParams(validatedRequest),
       models: [validatedRequest.model],
       modelConfigs: routes,
       workers: [],
@@ -600,6 +664,10 @@ export function createV1Router() {
 
   router.post("/v1/messages", async (c) => {
     return handleV1Request(c, "messages", await c.req.json());
+  });
+
+  router.post("/v1/completions", async (c) => {
+    return handleV1Request(c, "completions", await c.req.json());
   });
 
   return router;

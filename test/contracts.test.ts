@@ -69,11 +69,21 @@ describe("v1 endpoint contracts", () => {
         responseType: "V1MessagesResponse",
         streaming: false,
       },
+      completions: {
+        endpoint: "completions",
+        method: "POST",
+        path: "/v1/completions",
+        protocol: "openai_completions",
+        requestType: "V1CompletionsRequest",
+        responseType: "V1CompletionsResponse",
+        streaming: false,
+      },
     });
     expect(Object.values(V1_ENDPOINT_MATRIX).every((contract) => contract.streaming === false)).toBe(true);
     expect(parseV1EndpointPath("/v1/responses")).toBe("responses");
     expect(parseV1EndpointPath("/v1/chat/completions")).toBe("chat/completions");
     expect(parseV1EndpointPath("/v1/messages")).toBe("messages");
+    expect(parseV1EndpointPath("/v1/completions")).toBe("completions");
     expect(parseV1EndpointPath("/v1/unknown")).toBeNull();
     expect(getV1EndpointContract("/v1/messages")?.path).toBe("/v1/messages");
     expect(getV1EndpointContract("/v1/unknown")).toBeNull();
