@@ -1,5 +1,9 @@
 # JudgeJev
 
+She aint ready yet, but im seeing 25% better coding benchmark scores with .7 temp at 3 concuurent callss. probably be real good with bonsai's qwen 3.8 27b, maybe 12gb card 60k token with shared prefil.
+
+Releasing early in a working sample mode just cause i find it neat. should be adding more tests soon, but personal goal is to squeeze more from "dumber" models that run unreliably on lower end cards. Think 8gb 3070ti. Since its shared prefil you dont need huge PP speed, and with somthing like a vllm, you lose less overall in speed for the accuracy gains.
+
 An LLM fan-out proxy: send one request, JudgeJev fires it at multiple (often small, cheap, occasionally-wrong) models concurrently, and [Jev](https://docs.typesafe.ai) judges the candidates and returns the best one - in the shape of a normal single-model response.
 
 A client sends a normal OpenAI/Anthropic-shaped request. JudgeJev waits for every fanned-out attempt to finish or fail, has Jev pick the winner, and returns it in the original request's response shape - the caller can't tell it wasn't a single upstream call. Other than streaming responses and thinking being removed.
