@@ -67,6 +67,7 @@ TEMPERATURE="0"
 OUTPUT_NAME=""
 LIMIT=""
 FANOUT_LABEL=""
+RUN_LABEL="run_1"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,6 +77,7 @@ while [ $# -gt 0 ]; do
     --output|--output-name) OUTPUT_NAME="$2"; shift 2 ;;
     --limit) LIMIT="$2"; shift 2 ;;
     --fanout-label) FANOUT_LABEL="$2"; shift 2 ;;
+    --run-label) RUN_LABEL="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -107,7 +109,7 @@ case "${TARGET}" in
   judgejev)
     BASE_URL="http://localhost:8787/v1/completions"
     MODEL="fast"
-    DEFAULT_OUTPUT_NAME="through-judgejev-${TASK_SHORT}"
+    DEFAULT_OUTPUT_NAME="judgejev-${TASK_SHORT}"
     HEALTH_URL="http://localhost:8787/health"
     if ! curl -sf -m 5 "${HEALTH_URL}" >/dev/null 2>&1; then
       echo "Warning: could not reach JudgeJev at ${HEALTH_URL} - is it running (npm run dev)? Continuing anyway." >&2
@@ -130,6 +132,7 @@ else
   if [ "${TARGET}" = "judgejev" ] && [ -n "${FANOUT_LABEL}" ]; then
     OUTPUT_NAME="${OUTPUT_NAME}-fanout_${FANOUT_LABEL}"
   fi
+  OUTPUT_NAME="${OUTPUT_NAME}-${RUN_LABEL}"
 fi
 
 if [ ! -x .venv/bin/lm_eval ]; then

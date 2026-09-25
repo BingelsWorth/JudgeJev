@@ -100,10 +100,10 @@ sweep_completions_task() {
   fi
   for temp in "${COMPLETIONS_TEMPS[@]}"; do
     if [ "${SKIP_BASELINE}" -eq 0 ]; then
-      step "${script}" "${fixed_args[@]+"${fixed_args[@]}"}" --temp "${temp}" "${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"}"
+      step "${script}" "${fixed_args[@]+"${fixed_args[@]}"}" --temp "${temp}" --run-label baseline "${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"}"
     fi
     for i in $(seq 1 "${JUDGEJEV_RUNS}"); do
-      step "${script}" "${fixed_args[@]+"${fixed_args[@]}"}" --target judgejev --temp "${temp}" "${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"}" "${fanout_args[@]+"${fanout_args[@]}"}"
+      step "${script}" "${fixed_args[@]+"${fixed_args[@]}"}" --target judgejev --temp "${temp}" --run-label "run_${i}" "${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"}" "${fanout_args[@]+"${fanout_args[@]}"}"
     done
   done
 }
@@ -117,10 +117,10 @@ run_math500()   { sweep_completions_task ./run-completions-task.sh --task math50
 run_gsm8k() {
   local gsm8k_limit="${LIMIT_ARGS_GSM8K[0]:-100}"
   if [ "${SKIP_BASELINE}" -eq 0 ]; then
-    step ./run-gsm8k.sh baseline gsm8k "${gsm8k_limit}"
+    step ./run-gsm8k.sh baseline gsm8k "${gsm8k_limit}" "" "" baseline
   fi
   for i in $(seq 1 "${JUDGEJEV_RUNS}"); do
-    step ./run-gsm8k.sh judgejev gsm8k "${gsm8k_limit}" "" "${FANOUT_LABEL}"
+    step ./run-gsm8k.sh judgejev gsm8k "${gsm8k_limit}" "" "${FANOUT_LABEL}" "run_${i}"
   done
 }
 

@@ -92,6 +92,7 @@ Flag-based - only pass what you're changing:
 - `--target judgejev` - hits JudgeJev's own `/v1/completions` instead (`http://localhost:8787/v1/completions`, model `fast`). JudgeJev fans the raw prompt out to every configured route's own raw completions API - no chat wrapping - and has Jev judge the results as plain text, same as any other endpoint. Requires JudgeJev running first (`npm run dev` from the repo root; see the `gsm8k` section above for the exact steps).
 - `--temp` defaults to `0`, matching the committed `baseline-humaneval` results (0.421 ± 0.039). See "Why temperature matters" below for why `--target judgejev` needs a non-zero value to be a meaningful comparison at all.
 - `--output` defaults to `baseline-humaneval` / `through-judgejev-humaneval` at `--temp 0`, or that name with `-temp_<N>` appended for any other temperature - so results at different temperatures land in their own folder automatically instead of overwriting each other, unless you pass `--output` explicitly.
+- Suite runs add an explicit `-baseline` or `-run_<N>` suffix, so repeated runs and temperature-zero runs are identifiable from the directory name (for example, `judgejev-humaneval-temp_0.3-run_2`).
 
 ```bash
 ./run-humaneval.sh                              # unchanged: baseline, temp 0

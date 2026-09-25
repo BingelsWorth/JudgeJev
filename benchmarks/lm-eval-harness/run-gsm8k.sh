@@ -6,7 +6,7 @@
 # script, so the two runs can't silently drift out of sync with each other.
 #
 # Usage:
-#   ./run-gsm8k.sh [target] [tasks] [limit] [output_name] [fanout_label]
+#   ./run-gsm8k.sh [target] [tasks] [limit] [output_name] [fanout_label] [run_label]
 #
 # target: "baseline" (default) - hits ${MODEL_SERVER_URL}/v1/chat/completions
 #         directly, no JudgeJev involved.
@@ -33,13 +33,14 @@ TASKS="${2:-gsm8k}"
 LIMIT="${3:-100}"
 OUTPUT_NAME_ARG="${4:-}"
 FANOUT_LABEL="${5:-}"
+RUN_LABEL="${6:-run_1}"
 
 case "${TARGET}" in
   baseline)
     BASE_URL="${MODEL_SERVER_URL:-http://192.168.2.106:8000}/v1/chat/completions"
     MODEL="Qwen/Qwen3-1.7B"
     NUM_CONCURRENT=5
-    OUTPUT_NAME="${OUTPUT_NAME_ARG:-baseline-single-model}"
+    OUTPUT_NAME="${OUTPUT_NAME_ARG:-baseline-gsm8k}"
     ;;
   judgejev)
     BASE_URL="http://localhost:8787/v1/chat/completions"
@@ -48,9 +49,9 @@ case "${TARGET}" in
     if [ -n "${OUTPUT_NAME_ARG}" ]; then
       OUTPUT_NAME="${OUTPUT_NAME_ARG}"
     elif [ -n "${FANOUT_LABEL}" ]; then
-      OUTPUT_NAME="through-judgejev-fanout_${FANOUT_LABEL}"
+      OUTPUT_NAME="judgejev-gsm8k-fanout_${FANOUT_LABEL}"
     else
-      OUTPUT_NAME="through-judgejev"
+      OUTPUT_NAME="judgejev-gsm8k"
     fi
     HEALTH_URL="${BASE_URL%%/v1/*}/health"
     if ! curl -sf -m 5 "${HEALTH_URL}" >/dev/null 2>&1; then
@@ -62,6 +63,10 @@ case "${TARGET}" in
     exit 1
     ;;
 esac
+
+if [ -z "${OUTPUT_NAME_ARG}" ]; then
+  OUTPUT_NAME="${OUTPUT_NAME}-${RUN_LABEL}"
+fi
 
 if [ ! -x .venv/bin/lm_eval ]; then
   echo "Setting up .venv (uv required: https://docs.astral.sh/uv/)..."
